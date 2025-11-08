@@ -1,50 +1,80 @@
 #include <Arduino.h>
 
-#define RPWM_PIN 48   // PWM direita
-#define LPWM_PIN 47   // PWM esquerda
-#define R_EN 38       // enable direita
-#define L_EN 39       // enable esquerda
+/*
+  RIGHT MOTOR DRIVER (BTS7960) — RIGHT SIDE ONLY (ESP32 classic)
+  - EN pins are hard-wired to +5V (no GPIO enables).
+  - Direction convention for BTS7960:
+      * Forward  = R_PWM > 0, L_PWM = 0
+      * Reverse  = L_PWM > 0, R_PWM = 0
+  - SAFETY: Never drive L_PWM and R_PWM > 0 simultaneously.
+*/
 
-#define FREQ 20000    // 20 kHz para reduzir zumbido (podes deixar 1000)
-#define RES 8         // 0..255
+// ===== Safe pin mapping for ESP32 (RIGHT driver) =====
+// Use non-strapping, LEDC-capable pins.
+const int RIGHT_LPWM_PIN = 25;   // reverse (L_PWM)
+const int RIGHT_RPWM_PIN = 26;   // forward (R_PWM)
+
+// ===== LEDC (PWM) configuration =====
+const uint32_t PWM_FREQ_HZ   = 20000; // 20 kHz (above audible range)
+const uint8_t  PWM_RES_BITS  = 8;     // 0..255
+const uint8_t  CH_RIGHT_LPWM = 2;     // channel for RIGHT L_PWM
+const uint8_t  CH_RIGHT_RPWM = 3;     // channel for RIGHT R_PWM
+
+// ===== Test profile =====
+const uint8_t  MAX_DUTY      = 255;   // max duty for 8-bit resolution
+const uint16_t RAMP_STEP_MS  = 5;     // ramp step delay
+const uint16_t NEUTRAL_MS    = 300;   // neutral dwell
+const uint16_t DEADTIME_MS   = 50;    // short dead-time before direction change
+
+inline void rightNeutral() {
+  // Immediately stop: both channels to 0 (coast)
+  ledcWrite(CH_RIGHT_RPWM, 0);
+  ledcWrite(CH_RIGHT_LPWM, 0);
+}
+
+inline void rightForward(uint8_t duty) {
+  // Forward: R_PWM drives, L_PWM forced to 0
+  ledcWrite(CH_RIGHT_LPWM, 0);
+  ledcWrite(CH_RIGHT_RPWM, duty);
+}
+
+inline void rightReverse(uint8_t duty) {
+  // Reverse: L_PWM drives, R_PWM forced to 0
+  ledcWrite(CH_RIGHT_RPWM, 0);
+  ledcWrite(CH_RIGHT_LPWM, duty);
+}
 
 void setup() {
-  pinMode(R_EN, OUTPUT);
-  pinMode(L_EN, OUTPUT);
-  digitalWrite(R_EN, LOW);
-  digitalWrite(L_EN, LOW);
+  // Configure PWM channels
+  ledcSetup(CH_RIGHT_RPWM, PWM_FREQ_HZ, PWM_RES_BITS);
+  ledcSetup(CH_RIGHT_LPWM, PWM_FREQ_HZ, PWM_RES_BITS);
 
-  ledcSetup(0, FREQ, RES);  // canal 0 -> RPWM
-  ledcSetup(1, FREQ, RES);  // canal 1 -> LPWM
-  ledcAttachPin(RPWM_PIN, 0);
-  ledcAttachPin(LPWM_PIN, 1);
+  // Attach pins
+  ledcAttachPin(RIGHT_RPWM_PIN, CH_RIGHT_RPWM);
+  ledcAttachPin(RIGHT_LPWM_PIN, CH_RIGHT_LPWM);
 
-  ledcWrite(0, 0);
-  ledcWrite(1, 0);
+  // Start neutral (both off)
+  rightNeutral();
 }
 
 void loop() {
-  // ---- Sentido 1 (frente): ativa só R_EN ----
-  digitalWrite(L_EN, LOW);
-  digitalWrite(R_EN, HIGH);
-  for (int v = 0; v <= 255; v++) { ledcWrite(0, v); ledcWrite(1, 0); delay(5); }
-  for (int v = 255; v >= 0; v--) { ledcWrite(0, v); ledcWrite(1, 0); delay(5); }
+  // ===== Forward ramp (RIGHT side) =====
+  rightNeutral();
+  delay(DEADTIME_MS);
 
-  // Neutro (tudo a 0) antes de inverter
-  ledcWrite(0, 0); ledcWrite(1, 0);
-  digitalWrite(R_EN, LOW);
-  digitalWrite(L_EN, LOW);
-  delay(300);
+  for (int v = 0; v <= MAX_DUTY; ++v) { rightForward((uint8_t)v); delay(RAMP_STEP_MS); }
+  for (int v = MAX_DUTY; v >= 0; --v) { rightForward((uint8_t)v); delay(RAMP_STEP_MS); }
 
-  // ---- Sentido 2 (trás): ativa só L_EN ----
-  digitalWrite(R_EN, LOW);
-  digitalWrite(L_EN, HIGH);
-  for (int v = 0; v <= 255; v++) { ledcWrite(1, v); ledcWrite(0, 0); delay(5); }
-  for (int v = 255; v >= 0; v--) { ledcWrite(1, v); ledcWrite(0, 0); delay(5); }
+  rightNeutral();
+  delay(NEUTRAL_MS);
 
-  // Neutro outra vez
-  ledcWrite(0, 0); ledcWrite(1, 0);
-  digitalWrite(R_EN, LOW);
-  digitalWrite(L_EN, LOW);
+  // ===== Reverse ramp (RIGHT side) =====
+  rightNeutral();
+  delay(DEADTIME_MS);
+
+  for (int v = 0; v <= MAX_DUTY; ++v) { rightReverse((uint8_t)v); delay(RAMP_STEP_MS); }
+  for (int v = MAX_DUTY; v >= 0; --v) { rightReverse((uint8_t)v); delay(RAMP_STEP_MS); }
+
+  rightNeutral();
   delay(500);
 }
