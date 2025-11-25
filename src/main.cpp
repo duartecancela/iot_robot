@@ -2,18 +2,49 @@
 #include "motor_control.h"
 #include "BluetoothSerial.h"
 
-// Bluetooth serial instance (ESP32 classic Bluetooth)
-BluetoothSerial SerialBT;
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
 
+// -------------------- Bluetooth --------------------
+BluetoothSerial SerialBT;
 const char* DEVICE_NAME = "ESP32_4WD_ROBOT";
 
-// Helper: clamp values to valid PWM range
+// -------------------- BME280 --------------------
+Adafruit_BME280 bme;
+bool bmeOK = false;
+const uint8_t BME_ADDR_1 = 0x76;
+const uint8_t BME_ADDR_2 = 0x77;
+
+// How often to read sensor (ms)
+const unsigned long BME_INTERVAL_MS = 2000;
+unsigned long lastBmeRead = 0;
+
+// -------------------- Helpers --------------------
 int clampSpeed(int v) {
   if (v > 255) return 255;
   if (v < -255) return -255;
   return v;
 }
 
+void printBmeValues() {
+  if (!bmeOK) return;
+
+  float t = bme.readTemperature();           // °C
+  float h = bme.readHumidity();              // %
+  float p = bme.readPressure() / 100.0F;     // hPa
+
+  // ONLY print to USB Serial
+  Serial.print("BME280 -> T=");
+  Serial.print(t);
+  Serial.print(" °C  H=");
+  Serial.print(h);
+  Serial.print(" %  P=");
+  Serial.print(p);
+  Serial.println(" hPa");
+}
+
+// -------------------- Setup --------------------
 void setup() {
   Serial.begin(115200);
   delay(500);
@@ -21,9 +52,20 @@ void setup() {
   Serial.println("Initializing motors...");
   initMotors();
 
+  // I2C for BME280 (ESP32 default pins: SDA=21, SCL=22)
+  Wire.begin(21, 22);
+
+  Serial.println("Initializing BME280...");
+  if (bme.begin(BME_ADDR_1) || bme.begin(BME_ADDR_2)) {
+    bmeOK = true;
+    Serial.println("BME280 detected.");
+  } else {
+    bmeOK = false;
+    Serial.println("WARNING: BME280 not found!");
+  }
+
   Serial.println("Starting Bluetooth (numeric mode)...");
   SerialBT.begin(DEVICE_NAME);
-
   Serial.print("Bluetooth device name: ");
   Serial.println(DEVICE_NAME);
 
@@ -35,48 +77,48 @@ void setup() {
   Serial.println("         0,0       (stop)");
 }
 
+// -------------------- Loop --------------------
 void loop() {
-  // Check if data is available from Bluetooth
+  // ---- Handle Bluetooth motor commands ----
   if (SerialBT.available()) {
-    // Read one line until newline '\n'
     String line = SerialBT.readStringUntil('\n');
-    line.trim();  // Remove spaces, \r, etc.
+    line.trim();
 
-    if (line.length() == 0) {
-      return;  // Ignore empty lines
+    if (line.length() > 0) {
+      int commaIndex = line.indexOf(',');
+      if (commaIndex < 0) {
+        SerialBT.println("ERR: use format L,R  (ex: 150,-100)");
+        Serial.print("Invalid command: ");
+        Serial.println(line);
+      } else {
+        String leftStr  = line.substring(0, commaIndex);
+        String rightStr = line.substring(commaIndex + 1);
+
+        int left  = clampSpeed(leftStr.toInt());
+        int right = clampSpeed(rightStr.toInt());
+
+        drive(left, right);
+
+        Serial.print("BT CMD -> L: ");
+        Serial.print(left);
+        Serial.print("  R: ");
+        Serial.println(right);
+
+        // ONLY acknowledge command (no BME data!)
+        SerialBT.print("OK L=");
+        SerialBT.print(left);
+        SerialBT.print(" R=");
+        SerialBT.println(right);
+      }
     }
-
-    // Expected format: "L,R"
-    int commaIndex = line.indexOf(',');
-    if (commaIndex < 0) {
-      SerialBT.println("ERR: use format L,R  (ex: 150,-100)");
-      Serial.print("Invalid command: ");
-      Serial.println(line);
-      return;
-    }
-
-    // Split into left and right parts
-    String leftStr  = line.substring(0, commaIndex);
-    String rightStr = line.substring(commaIndex + 1);
-
-    int left  = clampSpeed(leftStr.toInt());
-    int right = clampSpeed(rightStr.toInt());
-
-    // Drive motors using signed PWM values
-    drive(left, right);
-
-    // Debug over USB serial
-    Serial.print("BT CMD -> L: ");
-    Serial.print(left);
-    Serial.print("  R: ");
-    Serial.println(right);
-
-    // Feedback to Bluetooth terminal
-    SerialBT.print("OK L=");
-    SerialBT.print(left);
-    SerialBT.print(" R=");
-    SerialBT.println(right);
   }
 
-  delay(5);  // small delay to avoid busy loop
+  // ---- Periodic BME280 reading ----
+  unsigned long now = millis();
+  if (bmeOK && (now - lastBmeRead >= BME_INTERVAL_MS)) {
+    lastBmeRead = now;
+    printBmeValues();   // prints only to USB Serial
+  }
+
+  delay(5);
 }
