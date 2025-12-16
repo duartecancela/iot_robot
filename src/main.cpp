@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "wifi_manager.h"
 #include "motor_control.h"
 #include "bluetooth_control.h"
 #include "bme280_sensor.h"
@@ -17,14 +18,15 @@ const unsigned long TOF_INTERVAL_MS = 200;
 void setup()
 {
     Serial.begin(115200);
+    initWiFi("WIFI_PRINTER", "c4nc3l477");
     delay(300);
 
     initMotors();
     initBluetooth("ESP32_4WD_ROBOT");
 
     // BME280 initializes I2C bus (SDA=21, SCL=22)
-    initBME();   // initializes I2C for BME (and IMU + ToF share the same bus)
-    initIMU();   // initialize IMU (will print WHO_AM_I, etc.)
+    initBME();        // initializes I2C for BME (and IMU + ToF share the same bus)
+    initIMU();        // initialize IMU (will print WHO_AM_I, etc.)
     initToFSensors(); // initialize both VL53L0X sensors
 
     Serial.println("System ready.");
@@ -32,6 +34,16 @@ void setup()
 
 void loop()
 {
+    wifiTask();
+
+    static bool printed = false;
+    if (!printed && wifiIsConnected())
+    {
+        printed = true;
+        Serial.print("WiFi connected. IP=");
+        Serial.println(wifiIp());
+    }
+
     // 1️⃣ Bluetooth motor control
     int left, right;
     if (getMotorCommand(left, right))
