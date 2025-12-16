@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "wifi_manager.h"
+#include "mqtt_manager.h"
 #include "motor_control.h"
 #include "bluetooth_control.h"
 #include "bme280_sensor.h"
@@ -19,6 +20,7 @@ void setup()
 {
     Serial.begin(115200);
     initWiFi("WIFI_PRINTER", "c4nc3l477");
+    initMQTT("192.168.1.110", 1883);
     delay(300);
 
     initMotors();
@@ -42,6 +44,16 @@ void loop()
         printed = true;
         Serial.print("WiFi connected. IP=");
         Serial.println(wifiIp());
+    }
+
+    mqttTask();
+
+    // Publish test message every 2 seconds
+    static unsigned long lastPub = 0;
+    if (mqttIsConnected() && millis() - lastPub >= 2000)
+    {
+        lastPub = millis();
+        mqttPublish("test/esp32", "hello from ESP32");
     }
 
     // 1️⃣ Bluetooth motor control
