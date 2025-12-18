@@ -6,9 +6,9 @@
 // Returns true if at least one sensor was initialized.
 bool initToFSensors();
 
-// Read both sensors.
-// frontMm -> distance from front sensor (ADDR 0x30)
-// sideMm  -> distance from side sensor  (ADDR 0x31)
+// Read both front sensors.
+// frontLeftMm  -> distance from FRONT-LEFT sensor  (ADDR 0x30)
+// frontRightMm -> distance from FRONT-RIGHT sensor (ADDR 0x31)
 //
 // If a sensor is not OK, its value will be set to 0xFFFF.
 // If the sensor returns an "out of range" value (>= 8000 mm),
@@ -16,4 +16,5 @@ bool initToFSensors();
 // as "no object".
 //
 // Returns true if at least one sensor is OK.
-bool readToFSensors(uint16_t &frontMm, uint16_t &sideMm);
+bool readToFSensors(uint16_t &frontLeftMm, uint16_t &frontRightMm);
+

@@ -4,61 +4,61 @@
 
 // I2C is already initialized in initBME() with Wire.begin(21, 22).
 
-// XSHUT pins for each sensor
-static const int XSHUT_FRONT_PIN = 4;  // front sensor
-static const int XSHUT_SIDE_PIN  = 5;  // side sensor
+// XSHUT pins for each sensor (both are at the front: left + right)
+static const int XSHUT_FRONT_LEFT_PIN  = 4;  // front-left sensor XSHUT
+static const int XSHUT_FRONT_RIGHT_PIN = 5;  // front-right sensor XSHUT
 
 // New I2C addresses for each sensor (must be different)
-static const uint8_t ADDR_FRONT = 0x30;
-static const uint8_t ADDR_SIDE  = 0x31;
+static const uint8_t ADDR_FRONT_LEFT  = 0x30;
+static const uint8_t ADDR_FRONT_RIGHT = 0x31;
 
-static VL53L0X s_front;
-static VL53L0X s_side;
+static VL53L0X s_frontLeft;
+static VL53L0X s_frontRight;
 
-static bool s_frontOK = false;
-static bool s_sideOK  = false;
+static bool s_frontLeftOK  = false;
+static bool s_frontRightOK = false;
 
 bool initToFSensors() {
     // Configure XSHUT pins
-    pinMode(XSHUT_FRONT_PIN, OUTPUT);
-    pinMode(XSHUT_SIDE_PIN,  OUTPUT);
+    pinMode(XSHUT_FRONT_LEFT_PIN,  OUTPUT);
+    pinMode(XSHUT_FRONT_RIGHT_PIN, OUTPUT);
 
     // Turn both sensors OFF
-    digitalWrite(XSHUT_FRONT_PIN, LOW);
-    digitalWrite(XSHUT_SIDE_PIN,  LOW);
+    digitalWrite(XSHUT_FRONT_LEFT_PIN,  LOW);
+    digitalWrite(XSHUT_FRONT_RIGHT_PIN, LOW);
     delay(10);
 
-    // -------- Front sensor setup --------
-    digitalWrite(XSHUT_FRONT_PIN, HIGH);   // enable front sensor only
+    // -------- Front-left sensor setup --------
+    digitalWrite(XSHUT_FRONT_LEFT_PIN, HIGH);   // enable front-left sensor only
     delay(10);
 
-    if (!s_front.init()) {
-        Serial.println("ERROR: VL53 front sensor init() failed!");
-        s_frontOK = false;
+    if (!s_frontLeft.init()) {
+        Serial.println("ERROR: VL53 front-left sensor init() failed!");
+        s_frontLeftOK = false;
     } else {
-        s_frontOK = true;
-        s_front.setTimeout(500);
-        s_front.setAddress(ADDR_FRONT);
-        s_front.setMeasurementTimingBudget(50000); // 50 ms
-        Serial.println("VL53 front sensor initialized (addr 0x30).");
+        s_frontLeftOK = true;
+        s_frontLeft.setTimeout(500);
+        s_frontLeft.setAddress(ADDR_FRONT_LEFT);
+        s_frontLeft.setMeasurementTimingBudget(50000); // 50 ms
+        Serial.println("VL53 front-left sensor initialized (addr 0x30).");
     }
 
-    // -------- Side sensor setup --------
-    digitalWrite(XSHUT_SIDE_PIN, HIGH);    // enable side sensor
+    // -------- Front-right sensor setup --------
+    digitalWrite(XSHUT_FRONT_RIGHT_PIN, HIGH);    // enable front-right sensor
     delay(10);
 
-    if (!s_side.init()) {
-        Serial.println("ERROR: VL53 side sensor init() failed!");
-        s_sideOK = false;
+    if (!s_frontRight.init()) {
+        Serial.println("ERROR: VL53 front-right sensor init() failed!");
+        s_frontRightOK = false;
     } else {
-        s_sideOK = true;
-        s_side.setTimeout(500);
-        s_side.setAddress(ADDR_SIDE);
-        s_side.setMeasurementTimingBudget(50000); // 50 ms
-        Serial.println("VL53 side sensor initialized (addr 0x31).");
+        s_frontRightOK = true;
+        s_frontRight.setTimeout(500);
+        s_frontRight.setAddress(ADDR_FRONT_RIGHT);
+        s_frontRight.setMeasurementTimingBudget(50000); // 50 ms
+        Serial.println("VL53 front-right sensor initialized (addr 0x31).");
     }
 
-    if (!s_frontOK && !s_sideOK) {
+    if (!s_frontLeftOK && !s_frontRightOK) {
         Serial.println("WARNING: no VL53L0X sensor initialized.");
         return false;
     }
@@ -66,20 +66,20 @@ bool initToFSensors() {
     return true;
 }
 
-bool readToFSensors(uint16_t &frontMm, uint16_t &sideMm) {
+bool readToFSensors(uint16_t &frontLeftMm, uint16_t &frontRightMm) {
     bool anyOK = false;
 
     // Default values if sensors are not OK
-    frontMm = 0xFFFF;
-    sideMm  = 0xFFFF;
+    frontLeftMm  = 0xFFFF;
+    frontRightMm = 0xFFFF;
 
-    if (s_frontOK) {
-        frontMm = s_front.readRangeSingleMillimeters();
+    if (s_frontLeftOK) {
+        frontLeftMm = s_frontLeft.readRangeSingleMillimeters();
         anyOK = true;
     }
 
-    if (s_sideOK) {
-        sideMm = s_side.readRangeSingleMillimeters();
+    if (s_frontRightOK) {
+        frontRightMm = s_frontRight.readRangeSingleMillimeters();
         anyOK = true;
     }
 

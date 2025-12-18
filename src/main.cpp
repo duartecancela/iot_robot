@@ -12,13 +12,51 @@ unsigned long lastBME = 0;
 unsigned long lastIMU = 0;
 unsigned long lastToF = 0;
 
-const unsigned long BME_INTERVAL_MS = 2000;
-const unsigned long IMU_INTERVAL_MS = 500;
-const unsigned long TOF_INTERVAL_MS = 200;
+// Sensor read intervals
+const unsigned long BME_INTERVAL_MS = 5000;
+const unsigned long IMU_INTERVAL_MS = 100;
+const unsigned long TOF_INTERVAL_MS = 100;
+
+// MQTT publish intervals
+unsigned long lastFastPub = 0;
+unsigned long lastSlowPub = 0;
+const unsigned long FAST_PUB_MS = 200;
+const unsigned long SLOW_PUB_MAX_MS = 30000;
+
+// BME publish thresholds
+const float BME_DELTA_T = 0.2f;  // °C
+const float BME_DELTA_H = 1.0f;  // %
+const float BME_DELTA_P = 1.0f;  // hPa
+
+// Cached latest sensor values
+float lastT = NAN, lastH = NAN, lastP = NAN;
+float lastPitch = NAN, lastRoll = NAN;
+uint16_t lastFrontLeftMm = 0xFFFF, lastFrontRightMm = 0xFFFF;
+
+// Last published BME values
+float pubT = NAN, pubH = NAN, pubP = NAN;
+
+static inline bool isInvalidU16(uint16_t v) { return (v == 0xFFFF); }
+static inline bool isNoObjToF(uint16_t v) { return (isInvalidU16(v) || v >= 8000); }
+static inline float fAbs(float x) { return (x < 0) ? -x : x; }
+
+static bool shouldPublishBME(float t, float h, float p, unsigned long now)
+{
+    if (isnan(pubT) || isnan(pubH) || isnan(pubP)) return true;
+
+    if (fAbs(t - pubT) >= BME_DELTA_T) return true;
+    if (fAbs(h - pubH) >= BME_DELTA_H) return true;
+    if (fAbs(p - pubP) >= BME_DELTA_P) return true;
+
+    if (now - lastSlowPub >= SLOW_PUB_MAX_MS) return true;
+
+    return false;
+}
 
 void setup()
 {
     Serial.begin(115200);
+
     // Add BOTH networks (work + home)
     addWiFiNetwork(WIFI_SSID_PRIMARY, WIFI_PASS_PRIMARY);
     addWiFiNetwork(WIFI_SSID_SECONDARY, WIFI_PASS_SECONDARY);
@@ -32,9 +70,9 @@ void setup()
     initBluetooth("ESP32_4WD_ROBOT");
 
     // BME280 initializes I2C bus (SDA=21, SCL=22)
-    initBME();        // initializes I2C for BME (and IMU + ToF share the same bus)
-    initIMU();        // initialize IMU (will print WHO_AM_I, etc.)
-    initToFSensors(); // initialize both VL53L0X sensors
+    initBME();
+    initIMU();
+    initToFSensors();
 
     Serial.println("System ready.");
 }
@@ -56,15 +94,9 @@ void loop()
 
     mqttTask();
 
-    // Publish test message every 2 seconds
-    static unsigned long lastPub = 0;
-    if (mqttIsConnected() && millis() - lastPub >= 2000)
-    {
-        lastPub = millis();
-        mqttPublish("test/esp32", "hello from ESP32");
-    }
+    const unsigned long now = millis();
 
-    // 1️⃣ Bluetooth motor control
+    // Bluetooth motor control
     int left, right;
     if (getMotorCommand(left, right))
     {
@@ -72,26 +104,33 @@ void loop()
         Serial.printf("BT CMD -> L=%d R=%d\n", left, right);
     }
 
-    // 2️⃣ Periodic BME280 reading
-    if (millis() - lastBME > BME_INTERVAL_MS)
+    // Periodic BME280 reading
+    if (now - lastBME >= BME_INTERVAL_MS)
     {
-        lastBME = millis();
+        lastBME = now;
         float t, h, p;
         if (readBME(t, h, p))
         {
-            Serial.printf("BME280 -> T=%.2fC  H=%.2f%%  P=%.2fhPa\n",
-                          t, h, p);
+            lastT = t;
+            lastH = h;
+            lastP = p;
+
+            // Serial output for environmental telemetry
+            Serial.printf("BME280 -> T=%.2fC  H=%.2f%%  P=%.2fhPa\n", t, h, p);
         }
     }
 
-    // 3️⃣ Periodic IMU reading (pitch/roll angles)
-    if (imuIsOK() && (millis() - lastIMU > IMU_INTERVAL_MS))
+    // Periodic IMU reading
+    if (imuIsOK() && (now - lastIMU >= IMU_INTERVAL_MS))
     {
-        lastIMU = millis();
-
+        lastIMU = now;
         float pitch, roll;
         if (imuGetAngles(pitch, roll))
         {
+            lastPitch = pitch;
+            lastRoll = roll;
+
+            // Serial output for IMU orientation telemetry
             Serial.print("IMU -> pitch=");
             Serial.print(pitch, 2);
             Serial.print(" deg  roll=");
@@ -100,38 +139,86 @@ void loop()
         }
     }
 
-    // 4️⃣ Periodic ToF reading (two VL53L0X sensors)
-    if (millis() - lastToF > TOF_INTERVAL_MS)
+    // Periodic ToF reading
+    if (now - lastToF >= TOF_INTERVAL_MS)
     {
-        lastToF = millis();
-
-        uint16_t frontMm, sideMm;
-        if (readToFSensors(frontMm, sideMm))
+        lastToF = now;
+        uint16_t fl, fr;
+        if (readToFSensors(fl, fr))
         {
-            // Interpret values >= 8000 as "no object"
-            Serial.print("ToF -> FRONT: ");
-            if (frontMm >= 8000 || frontMm == 0xFFFF)
+            lastFrontLeftMm = fl;
+            lastFrontRightMm = fr;
+
+            // Serial output for obstacle distance telemetry
+            Serial.print("ToF -> FRONT-LEFT: ");
+            if (isNoObjToF(fl))
             {
                 Serial.print("NO OBJ");
             }
             else
             {
-                Serial.print(frontMm);
+                Serial.print(fl);
                 Serial.print(" mm");
             }
 
-            Serial.print("   SIDE: ");
-            if (sideMm >= 8000 || sideMm == 0xFFFF)
+            Serial.print("   FRONT-RIGHT: ");
+            if (isNoObjToF(fr))
             {
                 Serial.println("NO OBJ");
             }
             else
             {
-                Serial.print(sideMm);
+                Serial.print(fr);
                 Serial.println(" mm");
             }
         }
     }
 
-    delay(5);
+    // FAST telemetry topic: ToF and IMU snapshot at fixed publish rate
+    if (mqttIsConnected() && (now - lastFastPub >= FAST_PUB_MS))
+    {
+        lastFastPub = now;
+
+        char payload[200];
+
+        int fl = isNoObjToF(lastFrontLeftMm) ? -1 : (int)lastFrontLeftMm;
+        int fr = isNoObjToF(lastFrontRightMm) ? -1 : (int)lastFrontRightMm;
+
+        if (isnan(lastPitch) || isnan(lastRoll))
+        {
+            snprintf(payload, sizeof(payload),
+                     "{\"tof\":{\"fl\":%d,\"fr\":%d},\"imu\":null}",
+                     fl, fr);
+        }
+        else
+        {
+            snprintf(payload, sizeof(payload),
+                     "{\"tof\":{\"fl\":%d,\"fr\":%d},\"imu\":{\"pitch\":%.2f,\"roll\":%.2f}}",
+                     fl, fr, lastPitch, lastRoll);
+        }
+
+        mqttPublish("robot/telemetry/fast", payload);
+    }
+
+    // SLOW telemetry topic: environmental data with change-based publishing
+    if (mqttIsConnected() && !isnan(lastT) && !isnan(lastH) && !isnan(lastP))
+    {
+        if (shouldPublishBME(lastT, lastH, lastP, now))
+        {
+            lastSlowPub = now;
+            pubT = lastT;
+            pubH = lastH;
+            pubP = lastP;
+
+            char payload[160];
+            snprintf(payload, sizeof(payload),
+                     "{\"bme\":{\"t\":%.2f,\"h\":%.2f,\"p\":%.2f}}",
+                     lastT, lastH, lastP);
+
+            mqttPublish("robot/telemetry/slow", payload);
+        }
+    }
+
+    // Cooperative yield for background networking tasks
+    delay(1);
 }
