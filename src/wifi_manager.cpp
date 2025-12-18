@@ -1,47 +1,37 @@
 #include "wifi_manager.h"
 #include <WiFi.h>
+#include <WiFiMulti.h>
 
-// Stored WiFi credentials
-static const char* g_ssid = nullptr;
-static const char* g_pass = nullptr;
+static WiFiMulti wifiMulti;
 
-// Reconnection timing
-static unsigned long lastTry = 0;
-static const unsigned long RETRY_MS = 5000;
+// Run interval to avoid spamming connection attempts
+static unsigned long lastRun = 0;
+static const unsigned long RUN_MS = 2000;
 
-void initWiFi(const char* ssid, const char* pass)
+void addWiFiNetwork(const char* ssid, const char* pass)
 {
-    g_ssid = ssid;
-    g_pass = pass;
+    // Add a known access point (SSID + password)
+    wifiMulti.addAP(ssid, pass);
+}
 
-    // Station mode (client)
+void initWiFiMulti()
+{
     WiFi.mode(WIFI_STA);
-
-    // Enable automatic reconnection
     WiFi.setAutoReconnect(true);
+    WiFi.persistent(false); // avoid writing credentials to flash repeatedly
 
-    // Avoid writing WiFi credentials to flash repeatedly
-    WiFi.persistent(false);
-
-    Serial.printf("WiFi: connecting to '%s'...\n", g_ssid);
-    WiFi.begin(g_ssid, g_pass);
-
-    lastTry = millis();
+    Serial.println("WiFiMulti: started (will connect to any known network).");
 }
 
 void wifiTask()
 {
-    // Already connected
-    if (WiFi.status() == WL_CONNECTED)
-        return;
+    if (millis() - lastRun < RUN_MS) return;
+    lastRun = millis();
 
-    // Retry connection periodically without blocking
-    if (millis() - lastTry >= RETRY_MS)
+    if (WiFi.status() != WL_CONNECTED)
     {
-        lastTry = millis();
-        Serial.println("WiFi: reconnecting...");
-        WiFi.disconnect(false);
-        WiFi.begin(g_ssid, g_pass);
+        Serial.println("WiFiMulti: trying to connect...");
+        wifiMulti.run(); // tries the best available known network
     }
 }
 
@@ -52,8 +42,12 @@ bool wifiIsConnected()
 
 String wifiIp()
 {
-    if (!wifiIsConnected())
-        return String("-");
-
+    if (!wifiIsConnected()) return String("-");
     return WiFi.localIP().toString();
+}
+
+String wifiSsid()
+{
+    if (!wifiIsConnected()) return String("-");
+    return WiFi.SSID();
 }

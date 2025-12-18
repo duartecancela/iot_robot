@@ -1,15 +1,17 @@
 #pragma once
 #include <Arduino.h>
 
-// Initialize WiFi connection
-void initWiFi(const char* ssid, const char* pass);
+// Register multiple WiFi networks (SSID/PASS)
+void addWiFiNetwork(const char* ssid, const char* pass);
 
-// Non-blocking WiFi task (call inside loop)
+// Initialize WiFiMulti (station mode + auto reconnect)
+void initWiFiMulti();
+
+// Non-blocking task: periodically tries to connect to any known network
 void wifiTask();
 
-// Check if WiFi is connected
 bool wifiIsConnected();
-
-// Get local IP address as string
 String wifiIp();
+String wifiSsid();
+
 

@@ -19,7 +19,12 @@ const unsigned long TOF_INTERVAL_MS = 200;
 void setup()
 {
     Serial.begin(115200);
-    initWiFi("WIFI_PRINTER", "c4nc3l477");
+    // Add BOTH networks (work + home)
+    addWiFiNetwork(WIFI_SSID_PRIMARY, WIFI_PASS_PRIMARY);
+    addWiFiNetwork(WIFI_SSID_SECONDARY, WIFI_PASS_SECONDARY);
+
+    initWiFiMulti();
+
     initMQTT("192.168.1.110", 1883);
     delay(300);
 
@@ -38,11 +43,14 @@ void loop()
 {
     wifiTask();
 
+    // Print connection info once (per boot)
     static bool printed = false;
     if (!printed && wifiIsConnected())
     {
         printed = true;
-        Serial.print("WiFi connected. IP=");
+        Serial.print("WiFi connected. SSID=");
+        Serial.print(wifiSsid());
+        Serial.print(" IP=");
         Serial.println(wifiIp());
     }
 
