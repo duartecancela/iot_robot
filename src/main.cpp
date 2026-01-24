@@ -63,7 +63,7 @@ void setup()
 
     initWiFiMulti();
 
-    initMQTT("192.168.1.110", 1883);
+    initMQTT(MQTT_HOST, MQTT_PORT);
     delay(300);
 
     initMotors();
