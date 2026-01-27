@@ -10,6 +10,8 @@
 .vscode/ipch/
 .vscode/settings.json
 .vscode/extensions.json
+.vscode/
+
 
 # =====================
 # Local secrets (DO NOT COMMIT)
