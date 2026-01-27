@@ -1,5 +1,5 @@
 // backend/index.js
-// Minimal MQTT -> Socket.IO bridge (hello world)
+// Minimal MQTT -> Socket.IO bridge (hello world) + aggregated telemetry state
 
 import express from "express";
 import cors from "cors";
@@ -18,16 +18,36 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// --- Health / debug endpoints ---
 app.get("/health", (req, res) => {
   res.json({ ok: true, mqttUrl: MQTT_URL, topic: MQTT_TOPIC });
+});
+
+// Last message (any topic)
+let lastMessage = null;
+
+// Aggregated state (last known values per channel/topic)
+let lastFast = null; // robot/telemetry/fast
+let lastSlow = null; // robot/telemetry/slow
+
+app.get("/telemetry/last", (req, res) => {
+  res.json(lastMessage ?? { ok: false, error: "No telemetry received yet" });
+});
+
+app.get("/telemetry/state", (req, res) => {
+  res.json({
+    ok: true,
+    mqtt: { url: MQTT_URL, topic: MQTT_TOPIC },
+    ts: Date.now(),
+    fast: lastFast, // null until first fast message arrives
+    slow: lastSlow, // null until first slow message arrives
+  });
 });
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: "*" },
 });
-
-let lastMessage = null;
 
 io.on("connection", (socket) => {
   console.log("Web client connected:", socket.id);
@@ -50,6 +70,8 @@ mqttClient.on("connect", () => {
 
 mqttClient.on("message", (topic, payload) => {
   const raw = payload.toString();
+  console.log("[MQTT IN]", topic, raw);
+
   const msg = {
     topic,
     raw,
@@ -63,7 +85,17 @@ mqttClient.on("message", (topic, payload) => {
     msg.json = null;
   }
 
+  // Update "last message"
   lastMessage = msg;
+
+  // Update aggregated state by topic
+  if (topic === "robot/telemetry/fast") {
+    lastFast = msg;
+  } else if (topic === "robot/telemetry/slow") {
+    lastSlow = msg;
+  }
+
+  // Push to any connected web clients (future frontend)
   io.emit("telemetry", msg);
 });
 
