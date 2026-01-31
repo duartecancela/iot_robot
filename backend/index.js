@@ -7,12 +7,50 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import mqtt from "mqtt";
 import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
 
 dotenv.config();
 
-const PORT = Number(process.env.PORT || 3001);
-const MQTT_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
-const MQTT_TOPIC = process.env.MQTT_TOPIC || "robot/telemetry/#";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function loadDefaults() {
+  try {
+    const defaultsPath = path.resolve(__dirname, "../shared/config/defaults.json");
+    const raw = fs.readFileSync(defaultsPath, "utf-8");
+    return JSON.parse(raw);
+  } catch (err) {
+    console.warn("Could not load shared defaults.json. Using built-in fallbacks:", err.message);
+    return {};
+  }
+}
+
+const defaults = loadDefaults();
+
+// --- Backend configuration resolution order ---
+// 1) .env
+// 2) shared/config/defaults.json
+// 3) hardcoded safe fallback
+
+// Backend HTTP port
+const DEFAULT_PORT = defaults?.backend?.port ?? 3001;
+const PORT = Number(process.env.PORT || DEFAULT_PORT);
+
+// MQTT connection parameters
+const DEFAULT_MQTT_HOST = defaults?.mqtt?.host ?? "127.0.0.1";
+const DEFAULT_MQTT_PORT = defaults?.mqtt?.port ?? 1883;
+const DEFAULT_MQTT_TOPIC = defaults?.mqtt?.topicWildcard ?? "robot/telemetry/#";
+
+// Allow full MQTT_URL override OR host/port override
+const mqttHost = process.env.MQTT_HOST || DEFAULT_MQTT_HOST;
+const mqttPort = process.env.MQTT_PORT || DEFAULT_MQTT_PORT;
+
+const MQTT_URL = process.env.MQTT_URL || `mqtt://${mqttHost}:${mqttPort}`;
+const MQTT_TOPIC = process.env.MQTT_TOPIC || DEFAULT_MQTT_TOPIC;
+
 
 const app = express();
 app.use(cors());

@@ -1,0 +1,14 @@
+{
+  "backend": {
+    "port": 3001
+  },
+  "mqtt": {
+    "host": "127.0.0.1",
+    "port": 1883,
+    "topicTelemetry": "robot/telemetry",
+    "topicWildcard": "robot/telemetry/#"
+  },
+  "frontend": {
+    "backendUrl": "http://localhost:3001"
+  }
+}

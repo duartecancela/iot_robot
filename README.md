@@ -11,11 +11,14 @@ A Python-based simulator is included to allow development and testing without th
 
 ```
 iot_robot/
-├─ esp32/        # ESP32 firmware (PlatformIO)
-├─ simulator/    # Python robot simulator (MQTT)
-├─ backend/      # Node.js backend (MQTT ↔ Socket.IO)
-├─ frontend/     # React frontend (Vite)
-└─ README.md     # Project overview (this file)
+├─ esp32/         # ESP32 firmware (PlatformIO)
+├─ simulator/     # Python robot simulator (MQTT)
+├─ backend/       # Node.js backend (MQTT ↔ Socket.IO)
+├─ frontend/      # React frontend (Vite)
+├─ shared/        # Shared configuration (defaults)
+│  └─ config/
+│     └─ defaults.json
+└─ README.md      # Project overview (this file)
 ```
 
 ---
@@ -35,8 +38,8 @@ iot_robot/
 ### 2. Python Simulator (`simulator/`)
 - Simulates robot telemetry and behavior
 - Publishes sensor data via MQTT
-- Subscribes to control commands
 - Enables development without physical hardware
+- Uses shared configuration defaults with environment overrides
 
 📄 Documentation: `simulator/README.md`
 
@@ -46,7 +49,9 @@ iot_robot/
 - Node.js (Express) application
 - Connects to MQTT broker (Mosquitto)
 - Bridges MQTT ↔ Web using Socket.IO
-- Handles telemetry distribution and control commands
+- Aggregates telemetry state
+- Exposes HTTP and real-time endpoints
+- Uses shared configuration defaults with environment overrides
 
 📄 Documentation: `backend/README.md`
 
@@ -57,6 +62,7 @@ iot_robot/
 - Real-time telemetry visualization
 - Robot control interface
 - Communicates with backend via Socket.IO
+- Configuration via Vite environment variables
 
 📄 Documentation: `frontend/README.md`
 
@@ -75,6 +81,30 @@ ESP32 / Simulator
         |
      Frontend (React)
 ```
+
+---
+
+## Shared Configuration
+
+The project uses a shared configuration file:
+
+```
+shared/config/defaults.json
+```
+
+This file defines **default values** for:
+- network ports
+- MQTT broker address
+- MQTT topic structure
+
+Each component can override these defaults using environment variables (`.env`) when needed.
+
+Configuration resolution order:
+```
+Environment variables → shared defaults → internal fallback
+```
+
+This approach avoids duplication, improves portability, and simplifies deployment across different machines.
 
 ---
 
@@ -98,7 +128,7 @@ Each component of the system is self-contained and provides its own setup and ex
 - Backend server → `backend/README.md`
 - Frontend application → `frontend/README.md`
 
-Follow the READMEs in this order for a first-time setup:
+Recommended setup order for first-time use:
 1. MQTT broker (Mosquitto)
 2. Backend
 3. Simulator or ESP32 firmware
@@ -110,7 +140,7 @@ Follow the READMEs in this order for a first-time setup:
 
 - Sensitive configuration files (`.env`, `secrets.ini`) are **not committed**
 - Example configuration files (`.env.example`, `secrets.example.ini`) are provided
-- The system is designed to run locally on a PC and later be deployed on a Raspberry Pi
+- The system is designed to run locally on a PC and later be deployed on a Raspberry Pi **without code changes**
 
 ---
 

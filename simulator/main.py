@@ -8,16 +8,47 @@ import time
 import json
 import random
 import paho.mqtt.client as mqtt
+import os
+from pathlib import Path
+
 
 
 # =========================
 # MQTT CONFIG
+# Resolution order:
+# 1) Environment variables
+# 2) shared/config/defaults.json
+# 3) Internal fallback values
 # =========================
-MQTT_HOST = "127.0.0.1"
-MQTT_PORT = 1883
 
-TOPIC_FAST = "robot/telemetry/fast"
-TOPIC_SLOW = "robot/telemetry/slow"
+def load_defaults():
+    """
+    Load shared defaults from: shared/config/defaults.json
+    Works when running from simulator/ folder or repo root.
+    """
+    try:
+        # simulator/main.py -> repo root is parent of "simulator"
+        repo_root = Path(__file__).resolve().parents[1]
+        defaults_path = repo_root / "shared" / "config" / "defaults.json"
+        with defaults_path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[simulator] Could not load shared defaults.json: {e}")
+        return {}
+
+defaults = load_defaults()
+
+DEFAULT_MQTT_HOST = defaults.get("mqtt", {}).get("host", "127.0.0.1")
+DEFAULT_MQTT_PORT = int(defaults.get("mqtt", {}).get("port", 1883))
+
+# Allow overriding via env (useful when switching PC / Raspberry Pi)
+MQTT_HOST = os.getenv("MQTT_HOST", DEFAULT_MQTT_HOST)
+MQTT_PORT = int(os.getenv("MQTT_PORT", str(DEFAULT_MQTT_PORT)))
+
+# Topics: keep the same structure as backend subscriptions
+TOPIC_FAST = os.getenv("MQTT_TOPIC_FAST", defaults.get("mqtt", {}).get("topicTelemetry", "robot/telemetry") + "/fast")
+TOPIC_SLOW = os.getenv("MQTT_TOPIC_SLOW", defaults.get("mqtt", {}).get("topicTelemetry", "robot/telemetry") + "/slow")
+
 
 
 # =========================
