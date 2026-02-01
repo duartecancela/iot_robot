@@ -53,6 +53,17 @@ static bool shouldPublishBME(float t, float h, float p, unsigned long now)
     return false;
 }
 
+/*
+ * MQTT -> motor command hook
+ * - This function is called by mqtt_manager.cpp when a valid drive command arrives over MQTT.
+ * - We keep this here to avoid changing mqtt_manager.h (no header modifications needed).
+ */
+void onMqttDriveCommand(int left, int right)
+{
+    drive(left, right);
+    Serial.printf("MQTT CMD -> L=%d R=%d\n", left, right);
+}
+
 void setup()
 {
     Serial.begin(115200);
@@ -96,7 +107,7 @@ void loop()
 
     const unsigned long now = millis();
 
-    // Bluetooth motor control
+    // Bluetooth motor control (unchanged)
     int left, right;
     if (getMotorCommand(left, right))
     {
