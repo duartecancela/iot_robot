@@ -204,6 +204,38 @@ Motor values are automatically clamped to the range `[-255, 255]`.
 
 ---
 
+### Applied Drive State (retained)
+
+In addition to command reception and ACK confirmation, the ESP32 publishes
+the **drive command that was actually applied**.
+
+This separation allows clients to distinguish between:
+- **Commanded** → what was requested
+- **Applied** → what the robot really executed
+
+#### Applied state topic
+- **Topic:**  
+  ```
+  robot/state/drive
+  ```
+- **Direction:** ESP32 → clients
+- **Retained:** Yes
+
+#### Payload example
+```json
+{"left":-200,"right":200}
+```
+
+This payload reflects the final motor values after parsing and clamping.
+
+Because the message is **retained**, dashboards and monitoring tools
+immediately receive the latest applied state upon subscription.
+
+This topic is the **single source of truth** for the robot drive state
+and should be used by backends and frontends to display
+the **actual robot motion**.
+
+
 ## CLI Testing (MQTT)
 
 Telemetry and commands can be tested from any machine with Mosquitto tools installed.
