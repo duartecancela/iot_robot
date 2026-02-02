@@ -34,6 +34,13 @@ static const char* TOPIC_CMD_DRIVE = "robot/cmd/drive";
  */
 static const char* TOPIC_CMD_DRIVE_ACK = "robot/cmd/drive/ack";
 
+/*
+ * NEW: Applied drive state topic (retained)
+ * - The ESP32 publishes the command it actually applied (after parsing + clamp)
+ * - Retained so dashboards can immediately show the latest applied L/R
+ */
+static const char* TOPIC_STATE_DRIVE = "robot/state/drive";
+
 static bool g_subscribed = false;
 
 /*
@@ -133,6 +140,23 @@ static void publishDriveAck(bool ok, int left, int right, const char* err)
     mqtt.publish(TOPIC_CMD_DRIVE_ACK, ack);
 }
 
+/*
+ * NEW: Publish applied drive state (retained)
+ * This is what the dashboard should display as "Applied".
+ */
+static void publishDriveState(int left, int right)
+{
+    if (!mqtt.connected()) return;
+
+    char st[96];
+    snprintf(st, sizeof(st),
+             "{\"left\":%d,\"right\":%d}",
+             left, right);
+
+    // Retained publish: dashboards get the last known applied command immediately
+    mqtt.publish(TOPIC_STATE_DRIVE, st, true);
+}
+
 // MQTT message callback
 static void onMqttMessage(char* topic, byte* payload, unsigned int length)
 {
@@ -163,6 +187,9 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int length)
 
             // Deliver to the application (main.cpp)
             onMqttDriveCommand(left, right);
+
+            // NEW: publish applied state (retained) for dashboards
+            publishDriveState(left, right);
 
             // ACK back so you can verify with mosquitto_sub
             publishDriveAck(true, left, right, nullptr);
