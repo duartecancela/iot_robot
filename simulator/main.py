@@ -46,6 +46,10 @@ TOPIC_FAST = os.getenv("MQTT_TOPIC_FAST", "robot/telemetry/fast")
 TOPIC_SLOW = os.getenv("MQTT_TOPIC_SLOW", "robot/telemetry/slow")
 TOPIC_CMD_DRIVE = os.getenv("MQTT_TOPIC_CMD_DRIVE", "robot/cmd/drive")
 
+# NEW (ESP32 feedback topics)
+TOPIC_CMD_DRIVE_ACK = os.getenv("MQTT_TOPIC_CMD_DRIVE_ACK", "robot/cmd/drive/ack")
+TOPIC_STATE_DRIVE = os.getenv("MQTT_TOPIC_STATE_DRIVE", "robot/state/drive")
+
 
 # =========================
 # ESP32-LIKE TIMINGS
@@ -131,13 +135,59 @@ def should_publish_bme(t: float, h: float, p: float, now_ms: int, last_slow_pub_
     return False
 
 
+# =========================
+# NEW: MQTT feedback helpers (ESP32-like)
+# =========================
+def publish_drive_ack(client: mqtt.Client, ok: bool, left: int = 0, right: int = 0, err: str | None = None) -> None:
+    """
+    Publish ACK on robot/cmd/drive/ack (NOT retained), like ESP32 feedback.
+    """
+    payload: dict = {"ok": bool(ok)}
+    if ok:
+        payload["left"] = int(left)
+        payload["right"] = int(right)
+    else:
+        if err:
+            payload["err"] = err
+
+    client.publish(TOPIC_CMD_DRIVE_ACK, json.dumps(payload), retain=False)
+
+
+def publish_drive_state(client: mqtt.Client, left: int, right: int) -> None:
+    """
+    Publish applied drive state on robot/state/drive (retained), like ESP32 state.
+    """
+    payload = {"left": int(left), "right": int(right)}
+    client.publish(TOPIC_STATE_DRIVE, json.dumps(payload), retain=True)
+
+
 def parse_drive_payload(payload: str) -> tuple[int, int]:
     """
     Matches ESP32 mqtt_manager behavior expected by onMqttDriveCommand(left,right)
     Payload format: "L,R"
     Clamped to [-255, 255]
+
+    NEW (added without breaking old behavior):
+      - also accepts JSON: {"left":120,"right":-80}
     """
-    parts = payload.strip().split(",")
+    s = payload.strip()
+    if not s:
+        raise ValueError("Expected format 'L,R'")
+
+    # NEW: try JSON first (keeps CSV working exactly as before)
+    if s.startswith("{"):
+        try:
+            obj = json.loads(s)
+        except json.JSONDecodeError:
+            # fall back to original CSV parsing error message below
+            obj = None
+
+        if isinstance(obj, dict) and ("left" in obj) and ("right" in obj):
+            left = clamp_int(int(obj["left"]), -255, 255)
+            right = clamp_int(int(obj["right"]), -255, 255)
+            return left, right
+
+    parts = s.split(",")
     if len(parts) != 2:
         raise ValueError("Expected format 'L,R'")
     left = clamp_int(int(parts[0].strip()), -255, 255)
@@ -153,6 +203,14 @@ def on_connect(client, userdata, flags, reason_code, properties):
         print(f"[simulator] Connected to MQTT {MQTT_HOST}:{MQTT_PORT}")
         client.subscribe(TOPIC_CMD_DRIVE)
         print(f"[simulator] Subscribed to: {TOPIC_CMD_DRIVE}")
+
+        # NEW: publish current state as retained (so dashboards have a value immediately)
+        with state_lock:
+            l, r = motor_left, motor_right
+        publish_drive_state(client, l, r)
+
+        # NEW: optional "ready" ACK (not retained)
+        publish_drive_ack(client, ok=False, err="ready")
     else:
         print(f"[simulator] MQTT connection failed, reason_code={reason_code}")
 
@@ -174,8 +232,14 @@ def on_message(client, userdata, msg):
         # Mirrors Serial.printf("MQTT CMD -> L=%d R=%d\n", ...)
         print(f"MQTT CMD -> L={left} R={right}")
 
+        # NEW: feedback topics (ESP32-like)
+        publish_drive_state(client, left, right)
+        publish_drive_ack(client, ok=True, left=left, right=right)
+
     except Exception as e:
         print(f"[simulator] Invalid drive command: {e}")
+        # NEW: ACK error (not retained)
+        publish_drive_ack(client, ok=False, err="invalid_payload")
 
 
 # =========================
