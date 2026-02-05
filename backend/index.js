@@ -11,7 +11,6 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
-
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -51,6 +50,11 @@ const mqttPort = process.env.MQTT_PORT || DEFAULT_MQTT_PORT;
 const MQTT_URL = process.env.MQTT_URL || `mqtt://${mqttHost}:${mqttPort}`;
 const MQTT_TOPIC = process.env.MQTT_TOPIC || DEFAULT_MQTT_TOPIC;
 
+// NEW: extra topics (drive feedback)
+const TOPIC_STATE_DRIVE = process.env.MQTT_TOPIC_STATE_DRIVE || "robot/state/drive";
+const TOPIC_CMD_DRIVE_ACK = process.env.MQTT_TOPIC_CMD_DRIVE_ACK || "robot/cmd/drive/ack";
+// NEW: command topic (frontend -> backend -> mqtt)
+const TOPIC_CMD_DRIVE = process.env.MQTT_TOPIC_CMD_DRIVE || "robot/cmd/drive";
 
 const app = express();
 app.use(cors());
@@ -68,6 +72,10 @@ let lastMessage = null;
 let lastFast = null; // robot/telemetry/fast
 let lastSlow = null; // robot/telemetry/slow
 
+// NEW: aggregated drive feedback
+let lastDriveState = null; // robot/state/drive
+let lastDriveAck = null; // robot/cmd/drive/ack
+
 app.get("/telemetry/last", (req, res) => {
   res.json(lastMessage ?? { ok: false, error: "No telemetry received yet" });
 });
@@ -79,8 +87,29 @@ app.get("/telemetry/state", (req, res) => {
     ts: Date.now(),
     fast: lastFast, // null until first fast message arrives
     slow: lastSlow, // null until first slow message arrives
+
+    // NEW: drive feedback for future frontend
+    drive: {
+      state: lastDriveState, // retained state topic
+      ack: lastDriveAck, // non-retained ack topic
+    },
   });
 });
+
+// NEW: helper utils for safe drive publishing
+function clampInt(v, min, max) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(min, Math.min(max, Math.trunc(n)));
+}
+
+function publishDriveCommand(left, right) {
+  const L = clampInt(left, -255, 255);
+  const R = clampInt(right, -255, 255);
+  const payload = `${L},${R}`; // keep same format you used before
+  mqttClient.publish(TOPIC_CMD_DRIVE, payload, { qos: 0, retain: false });
+  return { left: L, right: R, payload };
+}
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -93,6 +122,27 @@ io.on("connection", (socket) => {
   // Send last known message on connect (nice for hello world)
   if (lastMessage) socket.emit("telemetry", lastMessage);
 
+  // NEW: send last known aggregated drive feedback on connect
+  if (lastDriveState) socket.emit("drive:state", lastDriveState);
+  if (lastDriveAck) socket.emit("drive:ack", lastDriveAck);
+
+  // NEW: frontend -> backend -> mqtt drive commands
+  // Expected payload:
+  //   { left: number, right: number }
+  // or { left: "120", right: "-120" }
+  socket.on("cmd:drive", (data) => {
+    try {
+      const left = data?.left;
+      const right = data?.right;
+      const out = publishDriveCommand(left, right);
+
+      // optional immediate local feedback to UI
+      socket.emit("cmd:drive:sent", { ok: true, ...out, ts: Date.now() });
+    } catch (e) {
+      socket.emit("cmd:drive:sent", { ok: false, err: "publish_failed", ts: Date.now() });
+    }
+  });
+
   socket.on("disconnect", () => {
     console.log("Web client disconnected:", socket.id);
   });
@@ -104,6 +154,10 @@ const mqttClient = mqtt.connect(MQTT_URL);
 mqttClient.on("connect", () => {
   console.log("MQTT connected. Subscribing:", MQTT_TOPIC);
   mqttClient.subscribe(MQTT_TOPIC, { qos: 0 });
+
+  // NEW: subscribe to drive feedback topics
+  console.log("MQTT connected. Subscribing extra topics:", [TOPIC_STATE_DRIVE, TOPIC_CMD_DRIVE_ACK]);
+  mqttClient.subscribe([TOPIC_STATE_DRIVE, TOPIC_CMD_DRIVE_ACK], { qos: 0 });
 });
 
 mqttClient.on("message", (topic, payload) => {
@@ -131,6 +185,15 @@ mqttClient.on("message", (topic, payload) => {
     lastFast = msg;
   } else if (topic === "robot/telemetry/slow") {
     lastSlow = msg;
+  }
+
+  // NEW: update aggregated drive feedback
+  if (topic === TOPIC_STATE_DRIVE) {
+    lastDriveState = msg;
+    io.emit("drive:state", msg);
+  } else if (topic === TOPIC_CMD_DRIVE_ACK) {
+    lastDriveAck = msg;
+    io.emit("drive:ack", msg);
   }
 
   // Push to any connected web clients (future frontend)
