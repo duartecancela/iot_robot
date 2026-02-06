@@ -1,6 +1,8 @@
 import Header from './components/Header'
 import Footer from './components/Footer'
 import TelemetryState from './components/TelemetryState'
+import DriveJoystick from './components/DriveJoystick'
+
 
 
 function App() {
@@ -10,6 +12,7 @@ function App() {
 
       <main className="flex-1 max-w-5xl mx-auto p-6">
         <TelemetryState />
+        <DriveJoystick />
       </main>
       
 
