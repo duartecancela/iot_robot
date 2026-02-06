@@ -1,17 +1,47 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  ArrowsRightLeftIcon,
+  ArrowPathIcon,
+  SunIcon,
+  CloudIcon,
+  AdjustmentsHorizontalIcon,
+  TruckIcon,
+  CheckCircleIcon,
+  XCircleIcon,
+} from '@heroicons/react/24/outline'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL
+
+function Cell({ label, value, Icon, variant = 'base' }) {
+  const variants = {
+    base: 'bg-white border-stone-200',
+    tof: 'bg-amber-50/60 border-amber-200/60',
+    imu: 'bg-slate-50/70 border-slate-200/70',
+    bme: 'bg-emerald-50/55 border-emerald-200/60',
+    drive: 'bg-rose-50/55 border-rose-200/60',
+  }
+
+  return (
+    <div className={`rounded border px-2 py-1.5 ${variants[variant]}`}>
+      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-stone-600">
+        {Icon && <Icon className="h-3.5 w-3.5 opacity-70" />}
+        <span>{label}</span>
+      </div>
+      <div className="mt-0.5 font-mono text-xs text-stone-900">
+        {value ?? '—'}
+      </div>
+    </div>
+  )
+}
 
 export default function TelemetryState() {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  // Prevent overlapping requests (important for VPN/slow links)
   const inFlightRef = useRef(false)
 
   async function load({ showLoading = false } = {}) {
-    // Lock: if a request is already running, skip this tick
     if (inFlightRef.current) return
     inFlightRef.current = true
 
@@ -19,7 +49,7 @@ export default function TelemetryState() {
 
     try {
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/telemetry/state`)
+      const res = await fetch(`${BACKEND_URL}/telemetry/state`, { cache: 'no-store' })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const json = await res.json()
       setData(json)
@@ -32,100 +62,88 @@ export default function TelemetryState() {
   }
 
   useEffect(() => {
-    load({ showLoading: true }) // initial load with loading indicator
-
-    const interval = setInterval(() => {
-      // Poll silently (no "Loading..." flicker)
-      load({ showLoading: false })
-    }, 1000)
-
+    load({ showLoading: true })
+    const interval = setInterval(() => load({ showLoading: false }), 1000)
     return () => clearInterval(interval)
   }, [])
 
+  const fast = data?.fast?.json
+  const slow = data?.slow?.json
+  const driveState = data?.drive?.state?.json
+  const driveAck = data?.drive?.ack?.json
+
   return (
-    <section className="mt-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Telemetry State</h2>
+    <section className="mt-4">
+      {/* Header */}
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-stone-900">Telemetry</h2>
+
+          {loading ? (
+            <span className="rounded bg-stone-100 px-2 py-0.5 text-xs text-stone-700">
+              Loading…
+            </span>
+          ) : error ? (
+            <span className="rounded bg-red-50 px-2 py-0.5 text-xs text-red-700">
+              Error
+            </span>
+          ) : (
+            <span className="rounded bg-stone-100 px-2 py-0.5 text-xs text-stone-700">
+              {new Date(data?.ts ?? Date.now()).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
 
         <button
           onClick={() => load({ showLoading: true })}
-          className="px-3 py-2 text-sm border rounded-md hover:bg-gray-50"
+          className="rounded border border-stone-300 bg-stone-50 px-2 py-1 text-xs text-stone-800 hover:bg-stone-100"
         >
           Refresh
         </button>
       </div>
 
-      <div className="mt-3 border rounded-lg p-4 bg-white">
-        {loading && <p className="text-sm text-gray-500">Loading…</p>}
-
+      {/* Content */}
+      <div className="rounded border border-stone-200 bg-stone-50/40 p-2">
         {error && (
-          <p className="text-sm text-red-600">
+          <div className="mb-2 text-xs text-red-700">
             Error: {error}
-          </p>
-        )}
-
-        {!loading && !error && data && (
-          <div className="space-y-4">
-            {/* FAST */}
-            <div className="border rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-semibold">Fast Telemetry</h3>
-                <span className="text-xs text-gray-500 font-mono">{data.fast?.topic}</span>
-              </div>
-
-              {!data.fast?.json ? (
-                <p className="mt-2 text-sm text-gray-500">No fast telemetry yet.</p>
-              ) : (
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <div className="border rounded-lg p-3 bg-gray-50">
-                    <div className="text-xs text-gray-500">ToF (mm)</div>
-                    <div className="mt-1 text-sm">
-                      FL: <span className="font-mono">{data.fast.json.tof?.fl}</span> &nbsp;|&nbsp;
-                      FR: <span className="font-mono">{data.fast.json.tof?.fr}</span>
-                    </div>
-                  </div>
-
-                  <div className="border rounded-lg p-3 bg-gray-50">
-                    <div className="text-xs text-gray-500">IMU (deg)</div>
-                    <div className="mt-1 text-sm">
-                      Pitch: <span className="font-mono">{data.fast.json.imu?.pitch}</span> &nbsp;|&nbsp;
-                      Roll: <span className="font-mono">{data.fast.json.imu?.roll}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* SLOW */}
-            <div className="border rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-semibold">Slow Telemetry</h3>
-                <span className="text-xs text-gray-500 font-mono">{data.slow?.topic}</span>
-              </div>
-
-              {!data.slow?.json ? (
-                <p className="mt-2 text-sm text-gray-500">No slow telemetry yet.</p>
-              ) : (
-                <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                  <div className="border rounded-lg p-3 bg-gray-50">
-                    <div className="text-xs text-gray-500">Temperature (°C)</div>
-                    <div className="mt-1 text-sm font-mono">{data.slow.json.bme?.t}</div>
-                  </div>
-
-                  <div className="border rounded-lg p-3 bg-gray-50">
-                    <div className="text-xs text-gray-500">Humidity (%)</div>
-                    <div className="mt-1 text-sm font-mono">{data.slow.json.bme?.h}</div>
-                  </div>
-
-                  <div className="border rounded-lg p-3 bg-gray-50">
-                    <div className="text-xs text-gray-500">Pressure (hPa)</div>
-                    <div className="mt-1 text-sm font-mono">{data.slow.json.bme?.p}</div>
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
         )}
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {/* ToF */}
+          <Cell label="ToF FL" value={fast?.tof?.fl} Icon={ArrowsRightLeftIcon} variant="tof" />
+          <Cell label="ToF FR" value={fast?.tof?.fr} Icon={ArrowsRightLeftIcon} variant="tof" />
+
+          {/* IMU */}
+          <Cell label="Pitch" value={fast?.imu?.pitch} Icon={ArrowPathIcon} variant="imu" />
+          <Cell label="Roll" value={fast?.imu?.roll} Icon={ArrowPathIcon} variant="imu" />
+
+          {/* BME */}
+          <Cell label="Temp °C" value={slow?.bme?.t} Icon={SunIcon} variant="bme" />
+          <Cell label="Hum %" value={slow?.bme?.h} Icon={CloudIcon} variant="bme" />
+          <Cell
+            label="Press hPa"
+            value={slow?.bme?.p}
+            Icon={AdjustmentsHorizontalIcon}
+            variant="bme"
+          />
+
+          {/* Drive */}
+          <Cell
+            label="Drive"
+            value={driveState ? `${driveState.left},${driveState.right}` : null}
+            Icon={TruckIcon}
+            variant="drive"
+          />
+
+          <Cell
+            label="Ack"
+            value={driveAck ? (driveAck.ok ? 'OK' : 'ERR') : null}
+            Icon={driveAck?.ok ? CheckCircleIcon : XCircleIcon}
+            variant="drive"
+          />
+        </div>
       </div>
     </section>
   )

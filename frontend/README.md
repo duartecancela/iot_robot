@@ -13,6 +13,7 @@ It communicates with the backend using **Socket.IO** and follows a clean, compon
 - Vite
 - Tailwind CSS
 - Socket.IO client
+- **Heroicons (`@heroicons/react`)** – UI icons
 
 ---
 
@@ -22,6 +23,7 @@ It communicates with the backend using **Socket.IO** and follows a clean, compon
 - Clean layout with reusable components
 - Responsive UI using Tailwind CSS
 - Environment-based configuration (Vite)
+- Minimalist, compact dashboard with semantic icons
 
 ---
 
@@ -63,6 +65,9 @@ Install dependencies:
 npm install
 ```
 
+> This frontend uses **Heroicons** for UI icons.  
+> Make sure all dependencies are installed before running the application.
+
 ---
 
 ## Run (Development)
@@ -102,9 +107,10 @@ frontend/
 
 Styling is handled with **Tailwind CSS** using the official Vite plugin.
 
-- No custom CSS framework
 - Utility-first approach
-- Consistent layout across components
+- No custom CSS framework
+- Compact, responsive layout
+- Soft, low-contrast color palette for telemetry dashboards
 
 Tailwind is enabled via:
 
@@ -118,26 +124,40 @@ Tailwind is enabled via:
 
 - Protocol: **Socket.IO**
 - Backend URL: `VITE_BACKEND_URL`
-- Event: `telemetry`
+- Events:
+  - `telemetry`
+  - `drive:state`
+  - `drive:ack`
 
-On connection, the backend immediately sends the last known telemetry message.
+On connection, the backend immediately sends the last known telemetry and drive state.
 
 ---
 
 ## Development Notes
 
-- The frontend does **not** read shared configuration files directly
+- The frontend does **not** communicate directly with the MQTT broker
+- All telemetry and commands are routed through the backend
 - All configuration is injected at build time via `.env`
 - Backend and simulator handle shared defaults
 
-This separation keeps the frontend secure and portable.
+This separation keeps the frontend secure, portable, and easy to evolve.
+
+---
+
+## Troubleshooting
+
+- If the page loads blank, ensure all dependencies are installed:
+  ```bash
+  npm install
+  ```
+- Missing or outdated icon exports may cause runtime errors.
 
 ---
 
 ## Next Steps
 
-- Telemetry dashboard (cards, charts)
-- Robot control panel
+- Charts and historical telemetry
+- Robot control panel (drive, camera, laser)
 - Connection status indicator
 - Error handling and reconnection logic
 
