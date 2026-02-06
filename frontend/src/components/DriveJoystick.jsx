@@ -122,11 +122,13 @@ export default function DriveJoystick() {
               <div className="text-[10px] uppercase tracking-wide text-stone-600">
                 motors (-255..255)
               </div>
-              <div className="mt-0.5 flex justify-between font-mono text-stone-900">
-                <span>L: {mapped.left}</span>
-                <span>R: {mapped.right}</span>
+              <div className="mt-0.5 font-mono text-stone-900">
+                L: {mapped.left}
+                <br />
+                R: {mapped.right}
               </div>
             </div>
+
 
             <div className="text-center text-[10px] text-stone-500">
               Release joystick to return to center (0,0)

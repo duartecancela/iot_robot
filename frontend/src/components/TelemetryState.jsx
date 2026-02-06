@@ -72,6 +72,15 @@ export default function TelemetryState() {
   const driveState = data?.drive?.state?.json
   const driveAck = data?.drive?.ack?.json
 
+  // NEW: 24h time formatter (HH:MM:SS)
+  const ts = data?.ts ?? Date.now()
+  const time24 = new Date(ts).toLocaleTimeString('pt-PT', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+
   return (
     <section className="mt-4">
       {/* Header */}
@@ -89,7 +98,7 @@ export default function TelemetryState() {
             </span>
           ) : (
             <span className="rounded bg-stone-100 px-2 py-0.5 text-xs text-stone-700">
-              {new Date(data?.ts ?? Date.now()).toLocaleTimeString()}
+              {time24}
             </span>
           )}
         </div>
