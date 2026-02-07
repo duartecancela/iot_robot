@@ -1,209 +1,219 @@
-// backend/index.js
-// Minimal MQTT -> Socket.IO bridge (hello world) + aggregated telemetry state
+import dotenv from "dotenv";
+dotenv.config();
 
 import express from "express";
 import cors from "cors";
-import { createServer } from "http";
+import http from "http";
 import { Server } from "socket.io";
 import mqtt from "mqtt";
-import dotenv from "dotenv";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 
-dotenv.config();
+// --------------------
+// Config
+// --------------------
+const PORT = Number(process.env.PORT || 3001);
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const MQTT_URL =
+  process.env.MQTT_URL ||
+  `mqtt://${process.env.MQTT_HOST || "127.0.0.1"}:${process.env.MQTT_PORT || "1883"}`;
 
-function loadDefaults() {
-  try {
-    const defaultsPath = path.resolve(__dirname, "../shared/config/defaults.json");
-    const raw = fs.readFileSync(defaultsPath, "utf-8");
-    return JSON.parse(raw);
-  } catch (err) {
-    console.warn("Could not load shared defaults.json. Using built-in fallbacks:", err.message);
-    return {};
-  }
+const MQTT_TOPIC = process.env.MQTT_TOPIC || "robot/#";
+
+// Confirmed / applied topics
+const TOPIC_STATE_DRIVE =
+  process.env.MQTT_TOPIC_STATE_DRIVE || "robot/state/drive";
+const TOPIC_CMD_DRIVE_ACK =
+  process.env.MQTT_TOPIC_CMD_DRIVE_ACK || "robot/cmd/drive/ack";
+
+// Command topic (frontend → broker)
+const TOPIC_CMD_DRIVE =
+  process.env.MQTT_TOPIC_CMD_DRIVE || "robot/cmd/drive";
+
+// --------------------
+// Helpers
+// --------------------
+function isAllowedIncomingTopic(topic) {
+  if (!topic) return false;
+  if (topic.startsWith("robot/telemetry/")) return true;
+  if (topic === TOPIC_STATE_DRIVE) return true;
+  if (topic === TOPIC_CMD_DRIVE_ACK) return true;
+  return false;
 }
 
-const defaults = loadDefaults();
-
-// --- Backend configuration resolution order ---
-// 1) .env
-// 2) shared/config/defaults.json
-// 3) hardcoded safe fallback
-
-// Backend HTTP port
-const DEFAULT_PORT = defaults?.backend?.port ?? 3001;
-const PORT = Number(process.env.PORT || DEFAULT_PORT);
-
-// MQTT connection parameters
-const DEFAULT_MQTT_HOST = defaults?.mqtt?.host ?? "127.0.0.1";
-const DEFAULT_MQTT_PORT = defaults?.mqtt?.port ?? 1883;
-const DEFAULT_MQTT_TOPIC = defaults?.mqtt?.topicWildcard ?? "robot/telemetry/#";
-
-// Allow full MQTT_URL override OR host/port override
-const mqttHost = process.env.MQTT_HOST || DEFAULT_MQTT_HOST;
-const mqttPort = process.env.MQTT_PORT || DEFAULT_MQTT_PORT;
-
-const MQTT_URL = process.env.MQTT_URL || `mqtt://${mqttHost}:${mqttPort}`;
-const MQTT_TOPIC = process.env.MQTT_TOPIC || DEFAULT_MQTT_TOPIC;
-
-// NEW: extra topics (drive feedback)
-const TOPIC_STATE_DRIVE = process.env.MQTT_TOPIC_STATE_DRIVE || "robot/state/drive";
-const TOPIC_CMD_DRIVE_ACK = process.env.MQTT_TOPIC_CMD_DRIVE_ACK || "robot/cmd/drive/ack";
-// NEW: command topic (frontend -> backend -> mqtt)
-const TOPIC_CMD_DRIVE = process.env.MQTT_TOPIC_CMD_DRIVE || "robot/cmd/drive";
-
+// --------------------
+// Express + Socket.IO
+// --------------------
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- Health / debug endpoints ---
-app.get("/health", (req, res) => {
-  res.json({ ok: true, mqttUrl: MQTT_URL, topic: MQTT_TOPIC });
-});
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
 
-// Last message (any topic)
+// --------------------
+// State
+// --------------------
+let lastFast = null;
+let lastSlow = null;
+let lastDriveState = null;
+let lastDriveAck = null;
 let lastMessage = null;
 
-// Aggregated state (last known values per channel/topic)
-let lastFast = null; // robot/telemetry/fast
-let lastSlow = null; // robot/telemetry/slow
+const counters = {
+  total: 0,
+  allowed: 0,
+  dropped: 0,
+  byTopic: {},
+};
 
-// NEW: aggregated drive feedback
-let lastDriveState = null; // robot/state/drive
-let lastDriveAck = null; // robot/cmd/drive/ack
+function bumpTopic(topic) {
+  counters.byTopic[topic] = (counters.byTopic[topic] || 0) + 1;
+}
 
-app.get("/telemetry/last", (req, res) => {
-  res.json(lastMessage ?? { ok: false, error: "No telemetry received yet" });
+// --------------------
+// HTTP endpoints
+// --------------------
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    mqtt: {
+      url: MQTT_URL,
+      wildcard: MQTT_TOPIC,
+      allowed: [
+        "robot/telemetry/*",
+        TOPIC_STATE_DRIVE,
+        TOPIC_CMD_DRIVE_ACK,
+      ],
+      dropped: ["robot/cmd/* (except robot/cmd/drive/ack)"],
+    },
+  });
 });
 
 app.get("/telemetry/state", (req, res) => {
   res.json({
     ok: true,
-    mqtt: { url: MQTT_URL, topic: MQTT_TOPIC },
     ts: Date.now(),
-    fast: lastFast, // null until first fast message arrives
-    slow: lastSlow, // null until first slow message arrives
-
-    // NEW: drive feedback for future frontend
+    counters,
+    fast: lastFast,
+    slow: lastSlow,
     drive: {
-      state: lastDriveState, // retained state topic
-      ack: lastDriveAck, // non-retained ack topic
+      state: lastDriveState,
+      ack: lastDriveAck,
     },
+    lastMessage,
   });
 });
 
-// NEW: helper utils for safe drive publishing
-function clampInt(v, min, max) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return 0;
-  return Math.max(min, Math.min(max, Math.trunc(n)));
-}
-
-function publishDriveCommand(left, right) {
-  const L = clampInt(left, -255, 255);
-  const R = clampInt(right, -255, 255);
-  const payload = `${L},${R}`; // keep same format you used before
-  mqttClient.publish(TOPIC_CMD_DRIVE, payload, { qos: 0, retain: false });
-  return { left: L, right: R, payload };
-}
-
-const httpServer = createServer(app);
-const io = new Server(httpServer, {
-  cors: { origin: "*" },
-});
-
+// --------------------
+// WebSocket
+// --------------------
 io.on("connection", (socket) => {
-  console.log("Web client connected:", socket.id);
+  console.log("WS client connected:", socket.id);
 
-  // Send last known message on connect (nice for hello world)
-  if (lastMessage) socket.emit("telemetry", lastMessage);
-
-  // NEW: send last known aggregated drive feedback on connect
+  if (lastFast) socket.emit("telemetry:fast", lastFast);
+  if (lastSlow) socket.emit("telemetry:slow", lastSlow);
   if (lastDriveState) socket.emit("drive:state", lastDriveState);
   if (lastDriveAck) socket.emit("drive:ack", lastDriveAck);
 
-  // NEW: frontend -> backend -> mqtt drive commands
-  // Expected payload:
-  //   { left: number, right: number }
-  // or { left: "120", right: "-120" }
   socket.on("cmd:drive", (data) => {
-    try {
-      const left = data?.left;
-      const right = data?.right;
-      const out = publishDriveCommand(left, right);
+    const L = Math.max(-255, Math.min(255, Number(data?.left) || 0));
+    const R = Math.max(-255, Math.min(255, Number(data?.right) || 0));
+    const payload = `${L},${R}`;
 
-      // optional immediate local feedback to UI
-      socket.emit("cmd:drive:sent", { ok: true, ...out, ts: Date.now() });
-    } catch (e) {
-      socket.emit("cmd:drive:sent", { ok: false, err: "publish_failed", ts: Date.now() });
-    }
+    mqttClient.publish(TOPIC_CMD_DRIVE, payload);
+    socket.emit("cmd:drive:sent", {
+      ok: true,
+      left: L,
+      right: R,
+      payload,
+      ts: Date.now(),
+    });
   });
 
-  socket.on("disconnect", () => {
-    console.log("Web client disconnected:", socket.id);
-  });
+  socket.on("disconnect", () =>
+    console.log("WS client disconnected:", socket.id)
+  );
 });
 
-console.log("Connecting MQTT:", MQTT_URL);
-const mqttClient = mqtt.connect(MQTT_URL);
+// --------------------
+// MQTT
+// --------------------
+console.log("MQTT_URL =", MQTT_URL);
+console.log("MQTT_TOPIC =", MQTT_TOPIC);
+
+const mqttClient = mqtt.connect(MQTT_URL, {
+  reconnectPeriod: 2000,
+  connectTimeout: 5000,
+});
 
 mqttClient.on("connect", () => {
-  console.log("MQTT connected. Subscribing:", MQTT_TOPIC);
-  mqttClient.subscribe(MQTT_TOPIC, { qos: 0 });
+  console.log("MQTT: connected");
 
-  // NEW: subscribe to drive feedback topics
-  console.log("MQTT connected. Subscribing extra topics:", [TOPIC_STATE_DRIVE, TOPIC_CMD_DRIVE_ACK]);
-  mqttClient.subscribe([TOPIC_STATE_DRIVE, TOPIC_CMD_DRIVE_ACK], { qos: 0 });
+  mqttClient.subscribe(MQTT_TOPIC, (err) => {
+    if (err) console.log("MQTT subscribe error:", err.message);
+    else console.log("MQTT subscribed:", MQTT_TOPIC);
+  });
+
+  mqttClient.subscribe(
+    [TOPIC_STATE_DRIVE, TOPIC_CMD_DRIVE_ACK],
+    (err) => {
+      if (err)
+        console.log("MQTT subscribe (required) error:", err.message);
+      else
+        console.log(
+          "MQTT subscribed (required):",
+          TOPIC_STATE_DRIVE,
+          TOPIC_CMD_DRIVE_ACK
+        );
+    }
+  );
 });
 
+mqttClient.on("reconnect", () => console.log("MQTT: reconnect"));
+mqttClient.on("offline", () => console.log("MQTT: offline"));
+mqttClient.on("close", () => console.log("MQTT: close"));
+mqttClient.on("error", (err) =>
+  console.log("MQTT error:", err.message)
+);
+
 mqttClient.on("message", (topic, payload) => {
+  counters.total++;
+  bumpTopic(topic);
+
   const raw = payload.toString();
-  console.log("[MQTT IN]", topic, raw);
+  const allowed = isAllowedIncomingTopic(topic);
 
-  const msg = {
-    topic,
-    raw,
-    ts: Date.now(),
-  };
+  if (allowed) counters.allowed++;
+  else counters.dropped++;
 
-  // Try parse JSON, but keep raw always
+  console.log(`${allowed ? "ALLOW" : "DROP "} MQTT -> ${topic} ${raw}`);
+
+  if (!allowed) return;
+
+  const msg = { topic, raw, ts: Date.now() };
   try {
     msg.json = JSON.parse(raw);
-  } catch (e) {
+  } catch {
     msg.json = null;
   }
 
-  // Update "last message"
   lastMessage = msg;
 
-  // Update aggregated state by topic
   if (topic === "robot/telemetry/fast") {
     lastFast = msg;
+    io.emit("telemetry:fast", msg);
   } else if (topic === "robot/telemetry/slow") {
     lastSlow = msg;
-  }
-
-  // NEW: update aggregated drive feedback
-  if (topic === TOPIC_STATE_DRIVE) {
+    io.emit("telemetry:slow", msg);
+  } else if (topic === TOPIC_STATE_DRIVE) {
     lastDriveState = msg;
     io.emit("drive:state", msg);
   } else if (topic === TOPIC_CMD_DRIVE_ACK) {
     lastDriveAck = msg;
     io.emit("drive:ack", msg);
   }
-
-  // Push to any connected web clients (future frontend)
-  io.emit("telemetry", msg);
 });
 
-mqttClient.on("error", (err) => {
-  console.error("MQTT error:", err.message);
-});
-
-httpServer.listen(PORT, () => {
+// --------------------
+server.listen(PORT, () => {
   console.log(`Backend listening on http://localhost:${PORT}`);
 });
