@@ -235,6 +235,7 @@ This topic is the **single source of truth** for the robot drive state
 and should be used by backends and frontends to display
 the **actual robot motion**.
 
+---
 
 ## CLI Testing (MQTT)
 
@@ -246,6 +247,11 @@ Telemetry and commands can be tested from any machine with Mosquitto tools insta
 ### Subscribe to drive ACK
 ```bash
 mosquitto_sub -h <BROKER_IP> -t "robot/cmd/drive/ack" -v
+```
+
+### Subscribe to applied drive state (retained)
+```bash
+mosquitto_sub -h <BROKER_IP> -t "robot/state/drive" -v
 ```
 
 ### Send drive commands (CSV)
@@ -336,6 +342,7 @@ The camera is mounted on a **pan/tilt gimbal**, with the laser aligned to the ca
 - ✅ Motor control operational (Bluetooth + MQTT)
 - ✅ MQTT telemetry publishing (fast and slow topics)
 - ✅ MQTT remote drive control with ACK confirmation
+- ✅ Applied drive state published via MQTT (`robot/state/drive`)
 - ✅ ToF, IMU and BME280 sensors working
 - ✅ Wi-Fi with fallback networks
 - 🔧 Vision-based pest detection under development

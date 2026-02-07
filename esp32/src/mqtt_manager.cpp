@@ -1,3 +1,5 @@
+// mqtt_manager.cpp
+
 #include "mqtt_manager.h"
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -35,7 +37,7 @@ static const char* TOPIC_CMD_DRIVE = "robot/cmd/drive";
 static const char* TOPIC_CMD_DRIVE_ACK = "robot/cmd/drive/ack";
 
 /*
- * NEW: Applied drive state topic (retained)
+ * Applied drive state topic (retained)
  * - The ESP32 publishes the command it actually applied (after parsing + clamp)
  * - Retained so dashboards can immediately show the latest applied L/R
  */
@@ -50,31 +52,25 @@ static bool g_subscribed = false;
  *   2) CSV:  "120,-80"
  */
 
-// Extract an integer value after a given JSON key, e.g. key="left" -> 120
-// Returns true if found and parsed.
 static bool jsonExtractInt(const char* payload, const char* key, int& out)
 {
     if (!payload || !key) return false;
 
-    // Build pattern: "left"
     char pattern[32];
     snprintf(pattern, sizeof(pattern), "\"%s\"", key);
 
     const char* p = strstr(payload, pattern);
     if (!p) return false;
 
-    // Find ':' after the key
     p = strchr(p, ':');
     if (!p) return false;
-    p++; // move past ':'
+    p++;
 
-    // Skip whitespace
     while (*p == ' ' || *p == '\t') p++;
 
-    // Parse integer (supports negative)
     char* endPtr = nullptr;
     long v = strtol(p, &endPtr, 10);
-    if (endPtr == p) return false; // no conversion happened
+    if (endPtr == p) return false;
 
     out = (int)v;
     return true;
@@ -84,7 +80,6 @@ static bool parseDriveCommand(const char* payload, int& left, int& right)
 {
     if (!payload) return false;
 
-    // 1) Try JSON first (best for future backend/frontend integration)
     int l = 0, r = 0;
     bool hasL = jsonExtractInt(payload, "left", l);
     bool hasR = jsonExtractInt(payload, "right", r);
@@ -96,7 +91,6 @@ static bool parseDriveCommand(const char* payload, int& left, int& right)
         return true;
     }
 
-    // 2) Fallback: CSV "L,R" (handy for quick CLI tests)
     int ll = 0, rr = 0;
     if (sscanf(payload, " %d , %d ", &ll, &rr) == 2)
     {
@@ -115,8 +109,6 @@ static inline int clamp255(int v)
     return v;
 }
 
-// Publish an ACK message to confirm reception/parsing of a command.
-// Keeping it small avoids flooding.
 static void publishDriveAck(bool ok, int left, int right, const char* err)
 {
     if (!mqtt.connected()) return;
@@ -131,7 +123,6 @@ static void publishDriveAck(bool ok, int left, int right, const char* err)
     }
     else
     {
-        // Keep error short; avoid sending big payloads
         snprintf(ack, sizeof(ack),
                  "{\"ok\":false,\"err\":\"%s\"}",
                  (err && err[0]) ? err : "unknown");
@@ -140,10 +131,6 @@ static void publishDriveAck(bool ok, int left, int right, const char* err)
     mqtt.publish(TOPIC_CMD_DRIVE_ACK, ack);
 }
 
-/*
- * NEW: Publish applied drive state (retained)
- * This is what the dashboard should display as "Applied".
- */
 static void publishDriveState(int left, int right)
 {
     if (!mqtt.connected()) return;
@@ -153,29 +140,23 @@ static void publishDriveState(int left, int right)
              "{\"left\":%d,\"right\":%d}",
              left, right);
 
-    // Retained publish: dashboards get the last known applied command immediately
     mqtt.publish(TOPIC_STATE_DRIVE, st, true);
 }
 
-// MQTT message callback
 static void onMqttMessage(char* topic, byte* payload, unsigned int length)
 {
     if (!topic || !payload || length == 0) return;
 
-    // Copy payload into a null-terminated buffer
-    // Commands should be small; keep a safe cap.
     static char msg[256];
     unsigned int n = (length >= (sizeof(msg) - 1)) ? (sizeof(msg) - 1) : length;
     memcpy(msg, payload, n);
     msg[n] = '\0';
 
-    // Initial phase: log everything we receive.
     Serial.print("MQTT RX -> topic=");
     Serial.print(topic);
     Serial.print(" payload=");
     Serial.println(msg);
 
-    // Handle drive command topic
     if (strcmp(topic, TOPIC_CMD_DRIVE) == 0)
     {
         int left = 0, right = 0;
@@ -185,13 +166,9 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int length)
             left = clamp255(left);
             right = clamp255(right);
 
-            // Deliver to the application (main.cpp)
             onMqttDriveCommand(left, right);
 
-            // NEW: publish applied state (retained) for dashboards
             publishDriveState(left, right);
-
-            // ACK back so you can verify with mosquitto_sub
             publishDriveAck(true, left, right, nullptr);
         }
         else
@@ -202,8 +179,6 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int length)
 
         return;
     }
-
-    // Other topics can be handled here later (e.g. robot/cmd/mode, robot/cmd/limits, etc.)
 }
 
 void initMQTT(const char* brokerIp, uint16_t port)
@@ -222,14 +197,12 @@ static void subscribeTopicsOnce()
     if (!mqtt.connected()) return;
     if (g_subscribed) return;
 
-    // Subscribe to command topic(s)
     if (mqtt.subscribe(TOPIC_CMD_DRIVE))
     {
         Serial.print("MQTT: subscribed -> ");
         Serial.println(TOPIC_CMD_DRIVE);
         g_subscribed = true;
 
-        // Optional: publish a small "ready" ACK
         publishDriveAck(false, 0, 0, "ready");
     }
     else
@@ -252,7 +225,7 @@ static void reconnectMQTT()
     if (mqtt.connect(clientId.c_str()))
     {
         Serial.println("MQTT: connected");
-        g_subscribed = false; // force resubscribe after reconnect
+        g_subscribed = false;
         subscribeTopicsOnce();
     }
     else
@@ -279,6 +252,14 @@ bool mqttPublish(const char* topic, const char* payload)
         return false;
 
     return mqtt.publish(topic, payload);
+}
+
+bool mqttPublish(const char* topic, const char* payload, bool retained)
+{
+    if (!mqtt.connected())
+        return false;
+
+    return mqtt.publish(topic, payload, retained);
 }
 
 bool mqttIsConnected()

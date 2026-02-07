@@ -9,6 +9,7 @@ void mqttTask();
 
 // Publish message
 bool mqttPublish(const char* topic, const char* payload);
+bool mqttPublish(const char* topic, const char* payload, bool retained);
 
 // Check MQTT connection
 bool mqttIsConnected();

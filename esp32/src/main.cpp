@@ -1,3 +1,5 @@
+// main.cpp
+
 #include <Arduino.h>
 #include "wifi_manager.h"
 #include "mqtt_manager.h"
@@ -36,6 +38,10 @@ uint16_t lastFrontLeftMm = 0xFFFF, lastFrontRightMm = 0xFFFF;
 // Last published BME values
 float pubT = NAN, pubH = NAN, pubP = NAN;
 
+// Last applied motor values (what the robot is effectively using right now)
+static int appliedLeft = 0;
+static int appliedRight = 0;
+
 static inline bool isInvalidU16(uint16_t v) { return (v == 0xFFFF); }
 static inline bool isNoObjToF(uint16_t v) { return (isInvalidU16(v) || v >= 8000); }
 static inline float fAbs(float x) { return (x < 0) ? -x : x; }
@@ -53,14 +59,33 @@ static bool shouldPublishBME(float t, float h, float p, unsigned long now)
     return false;
 }
 
+// Publishes the current applied motor values so the dashboard can show "Applied"
+static void publishAppliedDriveState()
+{
+    if (!mqttIsConnected()) return;
+
+    char payload[128];
+    unsigned long ts = millis();
+
+    snprintf(payload, sizeof(payload),
+             "{\"left\":%d,\"right\":%d,\"ts\":%lu}",
+             appliedLeft, appliedRight, ts);
+
+    // Retained state: any client gets the latest applied L/R immediately
+    mqttPublish("robot/state/drive", payload, true);
+}
+
 /*
  * MQTT -> motor command hook
  * - This function is called by mqtt_manager.cpp when a valid drive command arrives over MQTT.
- * - We keep this here to avoid changing mqtt_manager.h (no header modifications needed).
+ * - mqtt_manager.cpp already publishes state+ack for MQTT commands.
+ * - Here we just apply the motors and keep a local cache of what's applied.
  */
 void onMqttDriveCommand(int left, int right)
 {
     drive(left, right);
+    appliedLeft = left;
+    appliedRight = right;
     Serial.printf("MQTT CMD -> L=%d R=%d\n", left, right);
 }
 
@@ -107,12 +132,18 @@ void loop()
 
     const unsigned long now = millis();
 
-    // Bluetooth motor control (unchanged)
+    // Bluetooth motor control
     int left, right;
     if (getMotorCommand(left, right))
     {
         drive(left, right);
+        appliedLeft = left;
+        appliedRight = right;
+
         Serial.printf("BT CMD -> L=%d R=%d\n", left, right);
+
+        // Also publish applied state so the UI shows the real motor values even when using Bluetooth
+        publishAppliedDriveState();
     }
 
     // Periodic BME280 reading
