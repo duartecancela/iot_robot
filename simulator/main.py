@@ -13,6 +13,7 @@ import json
 import time
 import random
 import threading
+from typing import Optional
 from pathlib import Path
 import paho.mqtt.client as mqtt
 
@@ -138,7 +139,14 @@ def should_publish_bme(t: float, h: float, p: float, now_ms: int, last_slow_pub_
 # =========================
 # NEW: MQTT feedback helpers (ESP32-like)
 # =========================
-def publish_drive_ack(client: mqtt.Client, ok: bool, left: int = 0, right: int = 0, err: str | None = None) -> None:
+def publish_drive_ack(
+    client: mqtt.Client,
+    ok: bool,
+    left: int = 0,
+    right: int = 0,
+    err: Optional[str] = None
+) -> None:
+
     """
     Publish ACK on robot/cmd/drive/ack (NOT retained), like ESP32 feedback.
     """
