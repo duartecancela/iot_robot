@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { io } from 'socket.io-client'
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v))
@@ -8,8 +9,45 @@ function round2(v) {
   return Math.round(v * 100) / 100
 }
 
+// Uses VITE_BACKEND_URL if defined, otherwise defaults to localhost:3001
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'
+
 export default function DriveJoystick() {
   const baseRef = useRef(null)
+
+  // ----------------------------
+  // Socket.IO (added)
+  // ----------------------------
+  const socketRef = useRef(null)
+  const lastSentRef = useRef({ left: 0, right: 0, ts: 0 })
+
+  useEffect(() => {
+    // Connect once
+    const socket = io(BACKEND_URL, {
+      transports: ['websocket'],
+    })
+    socketRef.current = socket
+
+    socket.on('connect', () => {
+      // Optional: console log
+      console.log('[WS] connected', socket.id)
+    })
+
+    socket.on('disconnect', () => {
+      console.log('[WS] disconnected')
+    })
+
+    // Optional: listen to backend confirmation
+    socket.on('cmd:drive:sent', (msg) => {
+      // msg: { ok, left, right, payload, ts }
+      // console.log('[WS] cmd:drive:sent', msg)
+    })
+
+    return () => {
+      socket.disconnect()
+      socketRef.current = null
+    }
+  }, [])
 
   // Normalized: x,y in [-1..1] (y up = forward)
   const [pos, setPos] = useState({ x: 0, y: 0 })
@@ -63,6 +101,26 @@ export default function DriveJoystick() {
       right: Math.round(rightN * 255),
     }
   }, [pos.x, pos.y])
+
+  // ----------------------------
+  // Send to backend (added)
+  // ----------------------------
+  useEffect(() => {
+    const socket = socketRef.current
+    if (!socket || !socket.connected) return
+
+    const now = Date.now()
+    const minIntervalMs = 50 // ~20 Hz (adjust if you want)
+
+    const last = lastSentRef.current
+    const changed = mapped.left !== last.left || mapped.right !== last.right
+    const tooSoon = now - last.ts < minIntervalMs
+
+    if (!changed || tooSoon) return
+
+    socket.emit('cmd:drive', { left: mapped.left, right: mapped.right })
+    lastSentRef.current = { left: mapped.left, right: mapped.right, ts: now }
+  }, [mapped.left, mapped.right])
 
   const knobStyle = {
     transform: `translate(${pos.x * 58}px, ${-pos.y * 58}px)`,
@@ -128,7 +186,6 @@ export default function DriveJoystick() {
                 R: {mapped.right}
               </div>
             </div>
-
 
             <div className="text-center text-[10px] text-stone-500">
               Release joystick to return to center (0,0)

@@ -2,7 +2,7 @@
 
 Web-based frontend for the IoT Robot Platform.
 
-This application provides a real-time interface to visualize robot telemetry and (in later stages) send control commands.  
+This application provides a real-time interface to visualize robot telemetry and send control commands.  
 It communicates with the backend using **Socket.IO** and follows a clean, component-based architecture.
 
 ---
@@ -12,7 +12,7 @@ It communicates with the backend using **Socket.IO** and follows a clean, compon
 - React
 - Vite
 - Tailwind CSS
-- Socket.IO client
+- **Socket.IO client** (real-time communication with backend)
 - **Heroicons (`@heroicons/react`)** – UI icons
 
 ---
@@ -20,6 +20,7 @@ It communicates with the backend using **Socket.IO** and follows a clean, compon
 ## Features
 
 - Real-time telemetry visualization
+- **Real-time drive control via joystick**
 - Clean layout with reusable components
 - Responsive UI using Tailwind CSS
 - Environment-based configuration (Vite)
@@ -31,6 +32,7 @@ It communicates with the backend using **Socket.IO** and follows a clean, compon
 
 - Node.js >= 18
 - Backend server running (see `backend/README.md`)
+- MQTT broker running (used indirectly via backend)
 
 ---
 
@@ -65,8 +67,11 @@ Install dependencies:
 npm install
 ```
 
-> This frontend uses **Heroicons** for UI icons.  
-> Make sure all dependencies are installed before running the application.
+This frontend relies on:
+- `socket.io-client` for real-time bidirectional communication
+- `@heroicons/react` for UI icons
+
+Make sure all dependencies are installed before running the application.
 
 ---
 
@@ -91,7 +96,7 @@ http://localhost:5173
 ```
 frontend/
 ├─ src/
-│  ├─ components/     # Reusable UI components (Header, Footer, etc.)
+│  ├─ components/     # Reusable UI components (Telemetry, Joystick, etc.)
 │  ├─ App.jsx         # Main application layout
 │  ├─ main.jsx        # Application entry point
 │  └─ index.css       # Tailwind CSS entry
@@ -122,44 +127,109 @@ Tailwind is enabled via:
 
 ## Backend Communication
 
-- Protocol: **Socket.IO**
-- Backend URL: `VITE_BACKEND_URL`
-- Events:
-  - `telemetry`
-  - `drive:state`
-  - `drive:ack`
+### Architecture Overview
 
-On connection, the backend immediately sends the last known telemetry and drive state.
+The frontend **never communicates directly with MQTT**.
+
+All communication follows this flow:
+
+```
+Frontend (React)
+   ↓ Socket.IO
+Backend (Node.js)
+   ↓ MQTT
+Broker
+   ↓ MQTT
+Robot (ESP32)
+```
+
+This keeps credentials, topics, and validation logic centralized in the backend.
+
+---
+
+### Socket.IO Events
+
+**Outbound (Frontend → Backend)**
+
+| Event | Payload | Description |
+|-----|--------|------------|
+| `cmd:drive` | `{ left: number, right: number }` | Send motor speeds |
+
+Motor values:
+- Range: `-255 .. 255`
+- Left and right motors are sent independently
+
+**Inbound (Backend → Frontend)**
+
+| Event | Payload | Description |
+|------|--------|------------|
+| `telemetry` | object | Robot telemetry snapshot |
+| `cmd:drive:sent` | `{ ok, left, right, ts }` | Acknowledgement of drive command |
+| `mqtt:message` | `{ topic, raw, ts }` | Raw MQTT messages (debug / advanced UI) |
+
+---
+
+## Drive Joystick
+
+The drive joystick provides **real-time differential drive control**.
+
+### Behaviour
+
+- Joystick axes:
+  - `x` → turning (left / right)
+  - `y` → forward / backward
+- Mapping:
+  ```
+  left  = y + x
+  right = y - x
+  ```
+- Output values are:
+  - clamped to `-255 .. 255`
+  - sent at a controlled rate (~20 Hz)
+- Releasing the joystick automatically sends `(0, 0)`
+
+### Notes
+
+- Rate limiting avoids flooding the backend and MQTT broker
+- Commands are only sent when values change
+- Backend performs final validation and clamping
 
 ---
 
 ## Development Notes
 
-- The frontend does **not** communicate directly with the MQTT broker
-- All telemetry and commands are routed through the backend
-- All configuration is injected at build time via `.env`
-- Backend and simulator handle shared defaults
-
-This separation keeps the frontend secure, portable, and easy to evolve.
+- The frontend does **not** require MQTT libraries
+- Socket.IO is the only real-time dependency
+- All robot control passes through backend validation
+- The UI can be used with:
+  - real robot
+  - simulator
+  - MQTT CLI testing (`mosquitto_pub`)
+- Frontend remains stateless regarding robot safety
 
 ---
 
 ## Troubleshooting
 
-- If the page loads blank, ensure all dependencies are installed:
+- Blank page:
   ```bash
   npm install
   ```
-- Missing or outdated icon exports may cause runtime errors.
+- Connection issues:
+  - Confirm `VITE_BACKEND_URL`
+  - Ensure backend is running and reachable
+- Icon-related errors:
+  - Verify `@heroicons/react` version matches imports
 
 ---
 
 ## Next Steps
 
 - Charts and historical telemetry
-- Robot control panel (drive, camera, laser)
-- Connection status indicator
-- Error handling and reconnection logic
+- Camera + pan/tilt control UI
+- Laser / deterrence controls
+- Connection status & latency indicators
+- Mobile-friendly control layout
 
 ---
 
