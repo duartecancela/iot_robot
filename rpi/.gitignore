@@ -2,3 +2,9 @@ venv/
 __pycache__/
 *.pyc
 .env
+
+# Camera ML models (do not commit)
+camera/models/
+camera/models/*.pb
+camera/models/*.pbtxt
+
