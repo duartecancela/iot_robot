@@ -18,10 +18,21 @@ CONF_THRES = 0.4
 PERSON_CLASS_ID = 1
 BIRD_CLASS_ID = 16  # for future use
 
-# Rotation helpers (set to 1 if needed)
-ROTATE_180 = int(os.getenv("VISION_ROTATE_180", "0")) == 1
-HFLIP = int(os.getenv("VISION_HFLIP", "0")) == 1
-VFLIP = int(os.getenv("VISION_VFLIP", "0")) == 1
+# ------------------------------------------------------------
+# Orientation (FIXED)
+# ------------------------------------------------------------
+# Camera is mounted upside down in your build, so we force 180° rotation.
+# If you ever re-mount the camera, change ROTATE_180 back to False.
+ROTATE_180 = True
+HFLIP = False
+VFLIP = False
+
+# (Optional) If you prefer env overrides later, set this to True:
+ALLOW_ENV_OVERRIDE = False
+if ALLOW_ENV_OVERRIDE:
+    ROTATE_180 = int(os.getenv("VISION_ROTATE_180", "1")) == 1
+    HFLIP = int(os.getenv("VISION_HFLIP", "0")) == 1
+    VFLIP = int(os.getenv("VISION_VFLIP", "0")) == 1
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 PB = os.path.join(MODEL_DIR, "frozen_inference_graph.pb")
