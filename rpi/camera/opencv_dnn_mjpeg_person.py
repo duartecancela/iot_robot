@@ -1,7 +1,7 @@
 import os
 import time
 import threading
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 
 import cv2
 from flask import Flask, Response, jsonify
@@ -12,22 +12,41 @@ HTTP_PORT = 8080
 
 FRAME_W = 640
 FRAME_H = 480
-CONF_THRES = 0.4
+CONF_THRES = 0.45  # um pouco mais exigente para evitar falsos positivos
 
-# COCO ids (for TF SSD label map)
-PERSON_CLASS_ID = 1
-BIRD_CLASS_ID = 16  # for future use
+# ------------------------------------------------------------
+# Target classes (COCO IDs for TF SSD label map)
+# ------------------------------------------------------------
+COCO_BOTTLE = 44
+COCO_CELL_PHONE = 77
+
+# Escolha do alvo:
+#   TARGET=bottle
+#   TARGET=cell_phone
+#   TARGET=both
+TARGET = os.getenv("TARGET", "bottle").strip().lower()
+
+TARGET_CLASS_IDS = set()
+if TARGET in ("bottle", "garrafa"):
+    TARGET_CLASS_IDS = {COCO_BOTTLE}
+elif TARGET in ("cell_phone", "phone", "telemovel", "telemóvel"):
+    TARGET_CLASS_IDS = {COCO_CELL_PHONE}
+else:
+    TARGET_CLASS_IDS = {COCO_BOTTLE, COCO_CELL_PHONE}
+
+ID_TO_LABEL = {
+    COCO_BOTTLE: "bottle",
+    COCO_CELL_PHONE: "cell_phone",
+}
 
 # ------------------------------------------------------------
 # Orientation (FIXED)
 # ------------------------------------------------------------
-# Camera is mounted upside down in your build, so we force 180° rotation.
-# If you ever re-mount the camera, change ROTATE_180 back to False.
 ROTATE_180 = True
 HFLIP = False
 VFLIP = False
 
-# (Optional) If you prefer env overrides later, set this to True:
+# Se quiseres voltar a ter variáveis de ambiente para flip/rotate:
 ALLOW_ENV_OVERRIDE = False
 if ALLOW_ENV_OVERRIDE:
     ROTATE_180 = int(os.getenv("VISION_ROTATE_180", "1")) == 1
@@ -70,6 +89,14 @@ def load_net():
     return net
 
 
+def _center_distance_sq(x: int, y: int, w: int, h: int) -> float:
+    cx = x + w / 2.0
+    cy = y + h / 2.0
+    dx = cx - (FRAME_W / 2.0)
+    dy = cy - (FRAME_H / 2.0)
+    return dx * dx + dy * dy
+
+
 def camera_loop():
     global latest_jpeg, latest_detections
 
@@ -95,23 +122,42 @@ def camera_loop():
         if class_ids is not None and len(class_ids) > 0:
             for cid, conf, box in zip(class_ids.flatten(), confidences.flatten(), boxes):
                 cid = int(cid)
-                if cid != PERSON_CLASS_ID:
+                if cid not in TARGET_CLASS_IDS:
                     continue
 
                 x, y, w, h = [int(v) for v in box]
-                dets.append({"label": "person", "x": x, "y": y, "w": w, "h": h, "conf": round(float(conf), 3)})
+                label = ID_TO_LABEL.get(cid, str(cid))
 
-                cv2.rectangle(bgr, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                cv2.putText(
-                    bgr,
-                    f"person {conf:.2f}",
-                    (x, max(0, y - 8)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 255, 0),
-                    2,
-                    cv2.LINE_AA,
+                dets.append(
+                    {
+                        "label": label,
+                        "x": x,
+                        "y": y,
+                        "w": w,
+                        "h": h,
+                        "conf": round(float(conf), 3),
+                    }
                 )
+
+        # (Opcional) ordenar por "mais perto do centro" para o tracker apanhar o alvo certo
+        dets.sort(key=lambda d: _center_distance_sq(d["x"], d["y"], d["w"], d["h"]))
+
+        # desenhar boxes
+        for d in dets:
+            x, y, w, h = d["x"], d["y"], d["w"], d["h"]
+            label = d["label"]
+            conf = d["conf"]
+            cv2.rectangle(bgr, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.putText(
+                bgr,
+                f"{label} {conf:.2f}",
+                (x, max(0, y - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 0),
+                2,
+                cv2.LINE_AA,
+            )
 
         frames += 1
         t1 = time.time()
@@ -122,7 +168,7 @@ def camera_loop():
 
         cv2.putText(
             bgr,
-            f"FPS: {fps_est:.1f}",
+            f"FPS: {fps_est:.1f} | TARGET={TARGET}",
             (10, 25),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.7,
