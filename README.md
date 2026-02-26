@@ -1,9 +1,11 @@
 # IoT Robot Platform
 
-This repository contains a complete IoT-based robotic platform composed of multiple independent but interconnected components.
+A modular MQTT-based robotic platform composed of firmware, edge runtime,
+backend, frontend and simulation layers.
 
-The project is designed to control and monitor a mobile robot using MQTT for communication and a web-based interface for real-time visualization and control.  
-A Python-based simulator is included to allow development and testing without the physical robot.
+The system enables real-time monitoring and control of a mobile robot
+using MQTT as the communication backbone and a web-based interface
+for visualization and command execution.
 
 ---
 
@@ -12,138 +14,152 @@ A Python-based simulator is included to allow development and testing without th
 ```
 iot_robot/
 ├─ esp32/         # ESP32 firmware (PlatformIO)
+├─ rpi/           # Raspberry Pi runtime (camera, servos, vision)
 ├─ simulator/     # Python robot simulator (MQTT)
-├─ backend/       # Node.js backend (MQTT ↔ Socket.IO)
+├─ backend/       # Node.js backend (MQTT ↔ Socket.IO bridge)
 ├─ frontend/      # React frontend (Vite)
-├─ shared/        # Shared configuration (defaults)
+├─ shared/        # Shared configuration
 │  └─ config/
 │     └─ defaults.json
-└─ README.md      # Project overview (this file)
+└─ README.md
 ```
 
 ---
 
-## Components Overview
+## System Architecture
 
-### 1. ESP32 Firmware (`esp32/`)
-- Low-level robot control
-- Motors, sensors, and actuators
-- MQTT publisher/subscriber
-- Developed with PlatformIO
+The system follows a layered, decoupled architecture:
 
-📄 Documentation: `esp32/README.md`
+```
+ESP32 (motors/sensors)     Raspberry Pi (vision/servos)
+            |                       |
+            +---------- MQTT -------+
+                        |
+                   Backend (Node.js)
+                        |
+                    Socket.IO
+                        |
+                    Frontend (React)
+```
+
+Each layer is independent and replaceable, allowing development and testing
+without requiring physical hardware.
 
 ---
 
-### 2. Python Simulator (`simulator/`)
-- Simulates robot telemetry and behavior
-- Publishes sensor data via MQTT
-- Enables development without physical hardware
-- Uses shared configuration defaults with environment overrides
+## Components
 
-📄 Documentation: `simulator/README.md`
+### ESP32 Firmware (`esp32/`)
+Low-level robot control:
+- Motor drivers
+- Sensor acquisition
+- MQTT publish/subscribe
+- PlatformIO-based firmware
+
+See: `esp32/README.md`
 
 ---
 
-### 3. Backend Server (`backend/`)
-- Node.js (Express) application
-- Connects to MQTT broker (Mosquitto)
-- Bridges MQTT ↔ Web using Socket.IO
+### Raspberry Pi Runtime (`rpi/`)
+Edge computation layer:
+- Camera capture
+- Object detection
+- Servo pan/tilt control
+- Laser / actuator control
+- Optional MQTT integration
+
+This layer performs high-level processing that is not suitable
+for microcontroller execution.
+
+See: `rpi/README.md`
+
+---
+
+### Python Simulator (`simulator/`)
+MQTT-based robot emulator:
+- Publishes telemetry
+- Receives drive commands
+- Mirrors ESP32 MQTT behavior
+- Used for development and testing
+
+See: `simulator/README.md`
+
+---
+
+### Backend (`backend/`)
+Node.js (Express) application:
+- Connects to MQTT broker
+- Bridges MQTT ↔ Web (Socket.IO)
 - Aggregates telemetry state
-- Exposes HTTP and real-time endpoints
-- Uses shared configuration defaults with environment overrides
+- Exposes HTTP + real-time endpoints
 
-📄 Documentation: `backend/README.md`
+See: `backend/README.md`
 
 ---
 
-### 4. Frontend Web Application (`frontend/`)
-- React application built with Vite
+### Frontend (`frontend/`)
+React (Vite) web interface:
 - Real-time telemetry visualization
 - Robot control interface
 - Communicates with backend via Socket.IO
-- Configuration via Vite environment variables
 
-📄 Documentation: `frontend/README.md`
-
----
-
-## Architecture Overview
-
-```
-ESP32 / Simulator
-        |
-      MQTT
-        |
-   Backend (Node.js)
-        |
-    Socket.IO
-        |
-     Frontend (React)
-```
+See: `frontend/README.md`
 
 ---
 
 ## Shared Configuration
 
-The project uses a shared configuration file:
+Default configuration is defined in:
 
 ```
 shared/config/defaults.json
 ```
 
-This file defines **default values** for:
-- network ports
-- MQTT broker address
-- MQTT topic structure
-
-Each component can override these defaults using environment variables (`.env`) when needed.
-
 Configuration resolution order:
+
 ```
 Environment variables → shared defaults → internal fallback
 ```
 
-This approach avoids duplication, improves portability, and simplifies deployment across different machines.
+This ensures portability across:
+
+- PC development
+- Raspberry Pi deployment
+- Simulator usage
+- Physical hardware execution
 
 ---
 
-## Technologies Used
+## Core Technologies
 
 - ESP32 / PlatformIO
+- Raspberry Pi (Python / OpenCV)
 - MQTT (Mosquitto)
-- Node.js + Express
+- Node.js (Express)
 - Socket.IO
 - React (Vite)
 - Python
 
 ---
 
-## Getting Started
+## Deployment Targets
 
-Each component of the system is self-contained and provides its own setup and execution instructions:
+- **Development:** PC + Simulator
+- **Edge Runtime:** Raspberry Pi
+- **Production Robot:** ESP32 + Raspberry Pi
 
-- ESP32 firmware → `esp32/README.md`
-- Python simulator → `simulator/README.md`
-- Backend server → `backend/README.md`
-- Frontend application → `frontend/README.md`
-
-Recommended setup order for first-time use:
-1. MQTT broker (Mosquitto)
-2. Backend
-3. Simulator or ESP32 firmware
-4. Frontend
+No structural changes are required when switching environments.
 
 ---
 
 ## Notes
 
-- Sensitive configuration files (`.env`, `secrets.ini`) are **not committed**
-- Example configuration files (`.env.example`, `secrets.example.ini`) are provided
-- The system is designed to run locally on a PC and later be deployed on a Raspberry Pi **without code changes**
+- Sensitive files (`.env`, `secrets.ini`) are not committed
+- Example configuration files are provided
+- Designed for modular expansion and future hardware integration
 
 ---
 
 ## License
 
-This project is intended for educational and experimental purposes.
+Educational and experimental purposes.
