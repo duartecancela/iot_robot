@@ -108,6 +108,58 @@ frontend/
 
 ---
 
+## Network Access (Development)
+
+When running the frontend on a Raspberry Pi or another machine and accessing it from
+other devices on the same network (PC, phone, tablet), Vite must allow external hosts.
+
+By default, Vite blocks unknown hosts for security reasons.
+
+### Vite configuration
+
+Edit `vite.config.js` and enable network access:
+
+```javascript
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+
+export default defineConfig({
+  plugins: [
+    react(),
+    tailwindcss(),
+  ],
+  server: {
+    host: true,
+    allowedHosts: 'all'
+  }
+})
+```
+
+Explanation:
+
+| Option | Purpose |
+|------|--------|
+| `host: true` | Allows Vite to listen on all network interfaces (`0.0.0.0`) |
+| `allowedHosts` | Allows external hosts such as `iotrobot.local` |
+
+### Access from other devices
+
+When running on the Raspberry Pi, the frontend can be accessed from any device on the same network:
+
+```
+http://iotrobot.local:5173
+```
+
+Example devices:
+
+- Desktop PC
+- Laptop
+- Smartphone
+- Tablet
+
+This is useful for testing the robot interface on mobile devices.
+
 ## Styling
 
 Styling is handled with **Tailwind CSS** using the official Vite plugin.
