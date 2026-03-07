@@ -35,6 +35,8 @@ ESP32 (motors/sensors)     Raspberry Pi (vision/servos)
             |                       |
             +---------- MQTT -------+
                         |
+                Mosquitto Broker
+                        |
                    Backend (Node.js)
                         |
                     Socket.IO
@@ -44,6 +46,40 @@ ESP32 (motors/sensors)     Raspberry Pi (vision/servos)
 
 Each layer is independent and replaceable, allowing development and testing
 without requiring physical hardware.
+
+---
+
+## Network Access
+
+When running the system on a Raspberry Pi, services are accessed using the
+hostname:
+
+```
+iotrobot.local
+```
+
+This avoids hardcoded IP addresses and allows the system to operate across
+different networks (home Wi-Fi, hotspot, lab networks, etc.).
+
+Example access points:
+
+Frontend:
+```
+http://iotrobot.local:5173
+```
+
+Backend API:
+```
+http://iotrobot.local:3001
+```
+
+MQTT Broker:
+```
+mqtt://iotrobot.local:1883
+```
+
+All components (ESP32 firmware, simulator, backend and frontend)
+use this hostname instead of fixed IP addresses.
 
 ---
 
@@ -127,6 +163,42 @@ This ensures portability across:
 - Raspberry Pi deployment
 - Simulator usage
 - Physical hardware execution
+
+---
+
+## Development Startup
+
+For convenience during development, helper scripts can start both the
+backend and frontend development servers.
+
+Start development environment:
+
+```bash
+./start_dev.sh
+```
+
+Stop development environment:
+
+```bash
+./stop_dev.sh
+```
+
+Default development endpoints:
+
+Frontend:
+```
+http://iotrobot.local:5173
+```
+
+Backend:
+```
+http://iotrobot.local:3001
+```
+
+These scripts are intended only for development.
+
+Production deployment will later use dedicated system services
+on the Raspberry Pi.
 
 ---
 

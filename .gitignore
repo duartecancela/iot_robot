@@ -47,3 +47,14 @@ pnpm-debug.log*
 # =====================
 .DS_Store
 Thumbs.db
+
+# =====================
+# Dev runtime files
+# =====================
+*.log
+*.pid
+
+backend/dev.log
+backend/dev.pid
+frontend/dev.log
+frontend/dev.pid
