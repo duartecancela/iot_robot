@@ -15,16 +15,16 @@ The Raspberry Pi is responsible for:
 
 # Architecture Overview
 
-Camera (Picamera2)
-        ↓
-OpenCV DNN (SSD MobileNet v3 COCO)
-        ↓
-Filter target class (bottle / cell_phone)
-        ↓
-Bounding box → center (cx, cy)
-        ↓
-Tracking loop (EMA + deadband + hysteresis)
-        ↓
+Camera (Picamera2)  
+↓  
+OpenCV DNN (SSD MobileNet v3 COCO)  
+↓  
+Filter target class (bottle / cell_phone)  
+↓  
+Bounding box → center (cx, cy)  
+↓  
+Tracking loop (EMA + deadband + hysteresis)  
+↓  
 Servo controller (PCA9685)
 
 Only ONE process must access the camera at a time.
@@ -33,19 +33,22 @@ Only ONE process must access the camera at a time.
 
 # Folder Structure
 
+```
 rpi/
-├── servos/
-│   ├── servo_controller.py
-│   ├── test_servos.py
-│   └── tracker_step3_servo.py
 ├── camera/
-│   ├── opencv_dnn_mjpeg_person.py
+│   ├── camera_stream.py
 │   └── models/
-│       ├── frozen_inference_graph.pb
-│       └── ssd_mobilenet_v3_large_coco_2020_01_14.pbtxt
+├── servos/
+│   └── servo_controller.py
+├── tracking/
+│   └── tracking_controller.py
+├── tests/
+│   ├── test_servo_pan_manual.py
+│   └── test_servo_tilt_manual.py
 ├── venv/
 ├── requirements.txt
 └── README.md
+```
 
 ---
 
@@ -61,88 +64,72 @@ Verify:
 sudo apt install i2c-tools  
 i2cdetect -y 1  
 
-Expected address:
+Expected address:  
 0x40
 
 ---
 
-# 2) Install System Dependencies
-
-sudo apt update  
-sudo apt install -y \
-    python3-picamera2 \
-    python3-opencv \
-    python3-numpy \
-    python3-simplejpeg \
-    ffmpeg
-
----
-
-# 3) Python Virtual Environment
+# 2) Python Virtual Environment
 
 Inside `rpi/`:
 
+```
 python3 -m venv venv --system-site-packages  
 source venv/bin/activate  
 pip install --upgrade pip  
+```
 
 Install required packages:
 
+```
 pip install \
     adafruit-blinka \
     adafruit-circuitpython-pca9685 \
     adafruit-circuitpython-motor \
     flask \
-    requests  
-
-pip freeze > requirements.txt  
-
-NOTE: No torch / ultralytics installed on Raspberry Pi.
+    requests
+```
 
 ---
 
-# 4) Download Detection Model
+# 3) Servo Testing
 
-Models are NOT included in repo.
+Run manual tests:
 
-mkdir -p camera/models  
-cd camera/models  
-
-curl -L -o frozen_inference_graph.pb \
-https://raw.githubusercontent.com/ankityddv/ObjectDetector-OpenCV/main/frozen_inference_graph.pb  
-
-curl -L -o ssd_mobilenet_v3_large_coco_2020_01_14.pbtxt \
-https://raw.githubusercontent.com/ankityddv/ObjectDetector-OpenCV/main/ssd_mobilenet_v3_large_coco_2020_01_14.pbtxt  
+```
+python -m tests.test_servo_pan_manual
+python -m tests.test_servo_tilt_manual
+```
 
 ---
 
-# 5) Vision Server
+# 4) Vision Server
 
 Run:
 
-source venv/bin/activate  
-TARGET=cell_phone python camera/opencv_dnn_mjpeg_person.py  
-
-Supported targets:
-
-TARGET=bottle  
-TARGET=cell_phone  
-TARGET=both  
+```
+TARGET=cell_phone python -m camera.camera_stream
+```
 
 Stream:
-http://<PI_IP>:8080/stream.mjpg  
+```
+http://<PI_IP>:8080/stream.mjpg
+```
 
 Detections:
-http://<PI_IP>:8080/detections  
+```
+http://<PI_IP>:8080/detections
+```
 
 ---
 
-# 6) Tracking (Servo Follow)
+# 5) Tracking (Servo Follow)
 
-In another terminal:
+Run in another terminal:
 
-source venv/bin/activate  
-python servos/tracker_step3_servo.py  
+```
+python -m tracking.tracking_controller
+```
 
 Tracking features:
 
@@ -154,27 +141,19 @@ Tracking features:
 
 ---
 
-# 7) Stability Tuning
+# 6) Stability Tuning
 
-If oscillation occurs:
+Adjust in `tracking_controller.py`:
 
-Adjust in tracker_step3_servo.py:
-
-EMA_ALPHA          # lower = smoother
-MAX_STEP_PAN       # reduce if hunting
-MAX_STEP_TILT      # reduce if vertical jitter
-GAIN_PAN           # lower = less aggressive
-GAIN_TILT          # lower = less aggressive
-
-Typical stable values:
-
-EMA_ALPHA = 0.15–0.25  
-MAX_STEP_PAN = 1.2–1.6  
-MAX_STEP_TILT = 1.0–1.3  
+- EMA_ALPHA
+- MAX_STEP_PAN
+- MAX_STEP_TILT
+- GAIN_PAN
+- GAIN_TILT
 
 ---
 
-# 8) Hardware Wiring
+# 7) Hardware Wiring
 
 PCA9685:
 
@@ -186,29 +165,14 @@ PCA9685:
 Servos:
 
 - Powered from external 5V
-- DO NOT power from Raspberry Pi 5V rail
+- DO NOT power from Raspberry Pi
 - Common GND mandatory
 
 ---
 
-# 9) Production Checklist
+# Next Steps
 
-Before installing on robot:
-
-- Calibrate PAN_CENTER and TILT_CENTER
-- Verify mechanical limits
-- Secure cables (strain relief)
-- Ensure common ground stability
-- Keep servo power wires away from camera ribbon
-
----
-
-# Next Step
-
-Backend + Frontend deployment on Raspberry Pi:
-
-- Install Node.js
-- Install backend dependencies
-- Build frontend
-- Serve frontend via backend or Nginx
-- Optional: use PM2 for production
+- Laser integration
+- State machine (AUTO_SCAN / TRACK / FIRE)
+- MQTT communication
+- Frontend integration

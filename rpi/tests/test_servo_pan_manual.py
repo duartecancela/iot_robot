@@ -1,4 +1,4 @@
-from servo_controller import ServoController
+from servos.servo_controller import ServoController
 import time
 
 sc = ServoController()
