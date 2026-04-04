@@ -7,16 +7,21 @@ GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(PIN, GPIO.OUT)
 
-print("LOW for 10 seconds")
-GPIO.output(PIN, GPIO.LOW)
-time.sleep(10)
+print("Blinking laser (CTRL+C to stop)")
 
-print("HIGH for 10 seconds")
-GPIO.output(PIN, GPIO.HIGH)
-time.sleep(10)
+try:
+    while True:
+        GPIO.output(PIN, GPIO.HIGH)
+        print("ON")
+        time.sleep(1)
 
-print("LOW for 10 seconds")
-GPIO.output(PIN, GPIO.LOW)
-time.sleep(10)
+        GPIO.output(PIN, GPIO.LOW)
+        print("OFF")
+        time.sleep(1)
 
-GPIO.cleanup()
+except KeyboardInterrupt:
+    print("Stopping...")
+
+finally:
+    GPIO.output(PIN, GPIO.LOW)
+    GPIO.cleanup()
