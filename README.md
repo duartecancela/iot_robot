@@ -204,6 +204,7 @@ on the Raspberry Pi.
 
 ## Core Technologies
 
+<<<<<<< HEAD
 - ESP32 / PlatformIO
 - Raspberry Pi (Python / OpenCV)
 - MQTT (Mosquitto)
@@ -221,6 +222,25 @@ on the Raspberry Pi.
 - **Production Robot:** ESP32 + Raspberry Pi
 
 No structural changes are required when switching environments.
+=======
+## PCA9685
+
+- VCC → 3.3V (RPi)
+- GND → GND (Pin 6) Shared
+- SDA → GPIO2 (Pin 3)
+- SCL → GPIO3 (Pin 5)
+
+## Servos
+
+- External 5V supply required
+- DO NOT power from Raspberry Pi
+- Common GND mandatory
+
+## Laser (MOSFET)
+
+- GPIO18 (Pin 12) → Gate
+- GND → Common GND
+- Laser powered externally (5V)
 
 ---
 
