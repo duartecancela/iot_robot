@@ -1,48 +1,45 @@
 import time
 import requests
 
-from servo_controller import ServoController
+from servos.servo_controller import ServoController
 
 DETECTIONS_URL = "http://127.0.0.1:8080/detections"
 HTTP_TIMEOUT = 0.25
 
-FRAME_W = 640
-FRAME_H = 480
+FRAME_W = 320
+FRAME_H = 240
 CENTER_X = FRAME_W / 2.0
 CENTER_Y = FRAME_H / 2.0
 
 # --------------------
 # Tuning
 # --------------------
-CONF_MIN = 0.35
+CONF_MIN = 0.55
 
-# Hysteresis deadband (LOW to stop, HIGH to start moving)
-DBX_LOW = 0.04
-DBX_HIGH = 0.07
+DBX_LOW = 0.10
+DBX_HIGH = 0.16
 
-DBY_LOW = 0.06
-DBY_HIGH = 0.10
+DBY_LOW = 0.12
+DBY_HIGH = 0.20
 
-# Gains (less aggressive = less hunting)
-GAIN_PAN = 14.0
-GAIN_TILT = 10.0
+GAIN_PAN = 6.0
+GAIN_TILT = 4.0
 
-# Per-loop max step (critical for stability)
-MAX_STEP_PAN = 1.6
-MAX_STEP_TILT = 1.2
+MAX_STEP_PAN = 0.8
+MAX_STEP_TILT = 0.5
 
-LOOP_DELAY = 0.05  # 20 Hz
+LOOP_DELAY = 0.06
 
-PAN_DIR = -1       # confirmed in your setup
+PAN_DIR = -1
 TILT_DIR = +1
 
-DEBUG = False
+DEBUG = True
 
 # --------------------
-# Smoothing (EMA)
+# Smoothing
 # --------------------
 SMOOTHING_ENABLED = True
-EMA_ALPHA = 0.20   # lower = smoother (reduces jitter chasing)
+EMA_ALPHA = 0.12
 
 # --------------------
 # Mechanical limits
@@ -50,15 +47,23 @@ EMA_ALPHA = 0.20   # lower = smoother (reduces jitter chasing)
 PAN_CENTER = 90.0
 TILT_CENTER = 120.0
 
-PAN_MIN, PAN_MAX = 20.0, 160.0
-TILT_MAX = 140.0
+PAN_MIN = 20.0
+PAN_MAX = 160.0
+
 TILT_MIN = 30.0
+TILT_MAX = 140.0
+
+# --------------------
+# Target loss handling
+# --------------------
+TARGET_LOST_TIMEOUT = 0.50
 
 # --------------------
 # Helpers
 # --------------------
 def clamp(v, vmin, vmax):
-    return max(vmin, min(vmax, vmax))
+    return max(vmin, min(v, vmax))
+
 
 def clamp_step(delta, max_step):
     if delta > max_step:
@@ -67,24 +72,17 @@ def clamp_step(delta, max_step):
         return -max_step
     return delta
 
+
 def norm_error(px, py):
     ex = (px - CENTER_X) / CENTER_X
     ey = (py - CENTER_Y) / CENTER_Y
     return ex, ey
 
+
 def extract_center(det):
     if not isinstance(det, dict):
         return None
 
-    # x,y,w,h (your server uses this)
-    if all(k in det for k in ("x", "y", "w", "h")):
-        try:
-            x, y, w, h = float(det["x"]), float(det["y"]), float(det["w"]), float(det["h"])
-            return x + w / 2.0, y + h / 2.0
-        except Exception:
-            return None
-
-    # fallback variants
     for kx, ky in [("cx", "cy"), ("center_x", "center_y")]:
         if kx in det and ky in det:
             try:
@@ -92,7 +90,18 @@ def extract_center(det):
             except Exception:
                 pass
 
+    if all(k in det for k in ("x", "y", "w", "h")):
+        try:
+            x = float(det["x"])
+            y = float(det["y"])
+            w = float(det["w"])
+            h = float(det["h"])
+            return x + w / 2.0, y + h / 2.0
+        except Exception:
+            return None
+
     return None
+
 
 def det_conf(det):
     try:
@@ -100,11 +109,11 @@ def det_conf(det):
     except Exception:
         return 0.0
 
+
 def pick_best_detection(dets, last_center=None):
     if not isinstance(dets, list) or not dets:
         return None
 
-    # lock-on: pick closest to last center
     if last_center is not None:
         lx, ly = last_center
 
@@ -121,8 +130,8 @@ def pick_best_detection(dets, last_center=None):
 
         return max(dets, key=score)
 
-    # fallback: highest conf
     return max(dets, key=det_conf)
+
 
 def get_detection(last_center=None):
     try:
@@ -141,6 +150,7 @@ def get_detection(last_center=None):
     except Exception:
         return None
 
+
 # --------------------
 # Main loop
 # --------------------
@@ -151,9 +161,11 @@ def main():
     tilt = TILT_CENTER
 
     last_center = None
-    cx_s, cy_s = None, None
+    last_seen_time = 0.0
 
-    # Hysteresis state: are we currently "moving" on each axis?
+    cx_s = None
+    cy_s = None
+
     moving_x = False
     moving_y = False
 
@@ -162,15 +174,19 @@ def main():
 
     try:
         while True:
+            now = time.time()
             center = get_detection(last_center=last_center)
-            if center is None:
-                time.sleep(LOOP_DELAY)
-                continue
 
-            cx, cy = center
-            last_center = (cx, cy)
+            if center is not None:
+                cx, cy = center
+                last_center = (cx, cy)
+                last_seen_time = now
+            else:
+                if last_center is None or (now - last_seen_time) > TARGET_LOST_TIMEOUT:
+                    time.sleep(LOOP_DELAY)
+                    continue
+                cx, cy = last_center
 
-            # Smooth center
             if SMOOTHING_ENABLED:
                 if cx_s is None:
                     cx_s, cy_s = cx, cy
@@ -184,10 +200,6 @@ def main():
 
             ex, ey = norm_error(cx_use, cy_use)
 
-            # -------------------------
-            # Hysteresis deadband logic
-            # -------------------------
-            # X axis
             if moving_x:
                 if abs(ex) < DBX_LOW:
                     moving_x = False
@@ -195,7 +207,6 @@ def main():
                 if abs(ex) > DBX_HIGH:
                     moving_x = True
 
-            # Y axis
             if moving_y:
                 if abs(ey) < DBY_LOW:
                     moving_y = False
@@ -203,26 +214,27 @@ def main():
                 if abs(ey) > DBY_HIGH:
                     moving_y = True
 
-            # If not moving on an axis, zero the error so it truly stops
             ex_cmd = ex if moving_x else 0.0
             ey_cmd = ey if moving_y else 0.0
 
-            # Control
             d_pan = PAN_DIR * (ex_cmd * GAIN_PAN)
             d_tilt = TILT_DIR * (ey_cmd * GAIN_TILT)
 
             d_pan = clamp_step(d_pan, MAX_STEP_PAN)
             d_tilt = clamp_step(d_tilt, MAX_STEP_TILT)
 
-            pan = max(PAN_MIN, min(pan + d_pan, PAN_MAX))
-            tilt = max(TILT_MIN, min(tilt + d_tilt, TILT_MAX))
+            pan = clamp(pan + d_pan, PAN_MIN, PAN_MAX)
+            tilt = clamp(tilt + d_tilt, TILT_MIN, TILT_MAX)
 
             sc.set(pan, tilt)
 
             if DEBUG:
                 print(
-                    f"ex={ex:+.3f} ey={ey:+.3f} | mx={moving_x} my={moving_y} "
-                    f"-> pan={pan:.1f} tilt={tilt:.1f}"
+                    f"cx={cx_use:.1f} cy={cy_use:.1f} "
+                    f"ex={ex:+.3f} ey={ey:+.3f} "
+                    f"mx={moving_x} my={moving_y} "
+                    f"d_pan={d_pan:+.3f} d_tilt={d_tilt:+.3f} "
+                    f"pan={pan:.1f} tilt={tilt:.1f}"
                 )
 
             time.sleep(LOOP_DELAY)
@@ -232,6 +244,7 @@ def main():
     finally:
         sc.close()
         print("Bye.")
+
 
 if __name__ == "__main__":
     main()
