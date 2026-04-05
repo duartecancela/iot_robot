@@ -46,6 +46,11 @@ static inline bool isInvalidU16(uint16_t v) { return (v == 0xFFFF); }
 static inline bool isNoObjToF(uint16_t v) { return (isInvalidU16(v) || v >= 8000); }
 static inline float fAbs(float x) { return (x < 0) ? -x : x; }
 
+static inline bool isRobotMoving()
+{
+    return (appliedLeft != 0 || appliedRight != 0);
+}
+
 static bool shouldPublishBME(float t, float h, float p, unsigned long now)
 {
     if (isnan(pubT) || isnan(pubH) || isnan(pubP)) return true;
@@ -64,22 +69,27 @@ static void publishAppliedDriveState()
 {
     if (!mqttIsConnected()) return;
 
-    char payload[128];
+    char payload[160];
     unsigned long ts = millis();
+    bool moving = isRobotMoving();
 
     snprintf(payload, sizeof(payload),
-             "{\"left\":%d,\"right\":%d,\"ts\":%lu}",
-             appliedLeft, appliedRight, ts);
+             "{\"left\":%d,\"right\":%d,\"moving\":%s,\"ts\":%lu}",
+             appliedLeft,
+             appliedRight,
+             moving ? "true" : "false",
+             ts);
 
-    // Retained state: any client gets the latest applied L/R immediately
+    // Retained state: any client gets the latest applied motor state immediately
     mqttPublish("robot/state/drive", payload, true);
 }
 
 /*
  * MQTT -> motor command hook
  * - This function is called by mqtt_manager.cpp when a valid drive command arrives over MQTT.
- * - mqtt_manager.cpp already publishes state+ack for MQTT commands.
- * - Here we just apply the motors and keep a local cache of what's applied.
+ * - mqtt_manager.cpp already publishes ack for MQTT commands.
+ * - Here we apply the motors, keep a local cache of what's applied,
+ *   and publish the resulting applied state.
  */
 void onMqttDriveCommand(int left, int right)
 {
@@ -87,6 +97,9 @@ void onMqttDriveCommand(int left, int right)
     appliedLeft = left;
     appliedRight = right;
     Serial.printf("MQTT CMD -> L=%d R=%d\n", left, right);
+
+    // Publish applied state so other components know whether the robot is moving
+    publishAppliedDriveState();
 }
 
 void setup()
