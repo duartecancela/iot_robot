@@ -1,237 +1,273 @@
-# IoT Robot Platform
+# Raspberry Pi Layer
 
-A modular MQTT-based robotic platform composed of firmware, edge runtime,
-backend, frontend and simulation layers.
+This folder contains the **Raspberry Pi hardware + vision tracking layer**
+of the `iot_robot` project.
 
-The system enables real-time monitoring and control of a mobile robot
-using MQTT as the communication backbone and a web-based interface
-for visualization and command execution.
+The Raspberry Pi is responsible for:
 
----
-
-## Project Structure
-
-```
-iot_robot/
-├─ esp32/         # ESP32 firmware (PlatformIO)
-├─ rpi/           # Raspberry Pi runtime (camera, servos, vision)
-├─ simulator/     # Python robot simulator (MQTT)
-├─ backend/       # Node.js backend (MQTT ↔ Socket.IO bridge)
-├─ frontend/      # React frontend (Vite)
-├─ shared/        # Shared configuration
-│  └─ config/
-│     └─ defaults.json
-└─ README.md
-```
+- Pan/Tilt servo control (PCA9685)
+- Camera vision processing (OpenCV DNN - COCO)
+- Object tracking (center error → servo control)
+- MJPEG streaming + JSON metadata
+- Laser control via GPIO + MOSFET
+- Laser firing logic based on target stabilization
+- Future: MQTT publishing + full system integration
 
 ---
 
-## System Architecture
+# Current Status
 
-The system follows a layered, decoupled architecture:
-
-```
-ESP32 (motors/sensors)     Raspberry Pi (vision/servos)
-            |                       |
-            +---------- MQTT -------+
-                        |
-                Mosquitto Broker
-                        |
-                   Backend (Node.js)
-                        |
-                    Socket.IO
-                        |
-                    Frontend (React)
-```
-
-Each layer is independent and replaceable, allowing development and testing
-without requiring physical hardware.
+✔ Servos (Pan/Tilt) working  
+✔ PCA9685 communication working (I2C)  
+✔ GPIO control validated  
+✔ Laser control via MOSFET working  
+✔ Camera streaming (MJPEG) working  
+✔ Object detection (SSD MobileNet v3 COCO) working  
+✔ JSON detections endpoint working  
+✔ Tracking (Pan + Tilt) functional and stabilized  
+✔ Laser controller implemented (3x blink)  
+✔ Laser firing integrated with tracking  
+✔ Project structure organized  
 
 ---
 
-## Network Access
+# Architecture Overview
 
-When running the system on a Raspberry Pi, services are accessed using the
-hostname:
+Camera (Picamera2)  
+↓  
+OpenCV DNN (SSD MobileNet v3 COCO)  
+↓  
+Filter target class (cell_phone)  
+↓  
+Bounding box → center (cx, cy)  
+↓  
+Tracking loop (EMA + deadband + hysteresis)  
+↓  
+Servo controller (PCA9685)  
+↓  
+Laser controller (GPIO18 → MOSFET)  
+↓  
+Fire logic (centered + stable + cooldown)
 
-```
-iotrobot.local
-```
-
-This avoids hardcoded IP addresses and allows the system to operate across
-different networks (home Wi-Fi, hotspot, lab networks, etc.).
-
-Example access points:
-
-Frontend:
-```
-http://iotrobot.local:5173
-```
-
-Backend API:
-```
-http://iotrobot.local:3001
-```
-
-MQTT Broker:
-```
-mqtt://iotrobot.local:1883
-```
-
-All components (ESP32 firmware, simulator, backend and frontend)
-use this hostname instead of fixed IP addresses.
+Only ONE process must access the camera at a time.
 
 ---
 
-## Components
+# Folder Structure
 
-### ESP32 Firmware (`esp32/`)
-Low-level robot control:
-- Motor drivers
-- Sensor acquisition
-- MQTT publish/subscribe
-- PlatformIO-based firmware
-
-See: `esp32/README.md`
+```
+rpi/
+├── camera/
+│   ├── camera_stream.py
+│   └── models/
+├── laser/
+│   └── laser_controller.py
+├── servos/
+│   └── servo_controller.py
+├── tracking/
+│   └── tracking_controller.py
+├── tests/
+│   ├── test_servo_pan_manual.py
+│   ├── test_servo_tilt_manual.py
+│   └── test_laser_gpio.py
+├── venv/
+├── requirements.txt
+└── README.md
+```
 
 ---
 
-### Raspberry Pi Runtime (`rpi/`)
-Edge computation layer:
-- Camera capture
-- Object detection
-- Servo pan/tilt control
-- Laser / actuator control
-- Optional MQTT integration
+# 1) Enable I2C (PCA9685)
 
-This layer performs high-level processing that is not suitable
-for microcontroller execution.
+```
+sudo raspi-config
+→ Interface Options
+→ I2C → Enable
+sudo reboot
+```
 
-See: `rpi/README.md`
+Verify:
+
+```
+sudo apt install i2c-tools
+i2cdetect -y 1
+```
+
+Expected address:
+```
+0x40
+```
 
 ---
 
-### Python Simulator (`simulator/`)
-MQTT-based robot emulator:
-- Publishes telemetry
-- Receives drive commands
-- Mirrors ESP32 MQTT behavior
-- Used for development and testing
+# 2) Python Virtual Environment
 
-See: `simulator/README.md`
+Inside `rpi/`:
+
+```
+python3 -m venv venv --system-site-packages
+source venv/bin/activate
+pip install --upgrade pip
+```
+
+Install required packages:
+
+```
+pip install \
+    adafruit-blinka \
+    adafruit-circuitpython-pca9685 \
+    adafruit-circuitpython-motor \
+    flask \
+    requests
+```
 
 ---
 
-### Backend (`backend/`)
-Node.js (Express) application:
-- Connects to MQTT broker
-- Bridges MQTT ↔ Web (Socket.IO)
-- Aggregates telemetry state
-- Exposes HTTP + real-time endpoints
+# 3) Servo Testing
 
-See: `backend/README.md`
+Run manual tests:
+
+```
+python -m tests.test_servo_pan_manual
+python -m tests.test_servo_tilt_manual
+```
+
+Controls:
+
+- PAN → A / D  
+- TILT → W / S  
 
 ---
 
-### Frontend (`frontend/`)
-React (Vite) web interface:
-- Real-time telemetry visualization
-- Robot control interface
-- Communicates with backend via Socket.IO
+# 4) Laser Testing (GPIO 18)
 
-See: `frontend/README.md`
+Basic GPIO test:
+
+```
+python3 tests/test_laser_gpio.py
+```
+
+Blink test (3 pulses):
+
+```
+python -m laser.laser_controller
+```
+
+Expected behavior:
+
+- Laser blinks 3 times
+- Returns to OFF state
 
 ---
 
-## Shared Configuration
+# 5) Vision Server
 
-Default configuration is defined in:
-
-```
-shared/config/defaults.json
-```
-
-Configuration resolution order:
+Run:
 
 ```
-Environment variables → shared defaults → internal fallback
+TARGET=cell_phone python -m camera.camera_stream
 ```
 
-This ensures portability across:
+Stream:
+```
+http://<PI_IP>:8080/stream.mjpg
+```
 
-- PC development
-- Raspberry Pi deployment
-- Simulator usage
-- Physical hardware execution
+Detections:
+```
+http://<PI_IP>:8080/detections
+```
+
+Notes:
+
+- Resolution optimized for low latency (320x240)
+- Reduced JPEG quality for performance
+- Detection tuned for stability vs responsiveness
 
 ---
 
-## Development Startup
+# 6) Tracking (Servo Follow)
 
-For convenience during development, helper scripts can start both the
-backend and frontend development servers.
+Run in another terminal:
 
-Start development environment:
-
-```bash
-./start_dev.sh
+```
+python -m tracking.tracking_controller
 ```
 
-Stop development environment:
+Tracking features:
 
-```bash
-./stop_dev.sh
-```
-
-Default development endpoints:
-
-Frontend:
-```
-http://iotrobot.local:5173
-```
-
-Backend:
-```
-http://iotrobot.local:3001
-```
-
-These scripts are intended only for development.
-
-Production deployment will later use dedicated system services
-on the Raspberry Pi.
+- Target lock-on (based on previous position)
+- EMA smoothing (reduces jitter)
+- Hysteresis deadband (prevents oscillation)
+- Limited step movement (stability control)
+- Separate tuning for pan and tilt
+- Target loss tolerance (short-term memory)
+- Confidence filtering
 
 ---
 
-## Core Technologies
+# 7) Laser Firing Logic
 
-- ESP32 / PlatformIO
-- Raspberry Pi (Python / OpenCV)
-- MQTT (Mosquitto)
-- Node.js (Express)
-- Socket.IO
-- React (Vite)
-- Python
+Laser is triggered only when:
 
----
+- A valid target is detected
+- Target is near the center of the frame
+- Target remains stable for a short period (hold time)
+- System is not in cooldown
 
-## Deployment Targets
+Behavior:
 
-- **Development:** PC + Simulator
-- **Edge Runtime:** Raspberry Pi
-- **Production Robot:** ESP32 + Raspberry Pi
-
-No structural changes are required when switching environments.
+- Laser blinks 3 times
+- Non-blocking execution (threaded)
+- Cooldown prevents repeated firing
+- Requires target reacquisition before next firing
 
 ---
 
-## Notes
+# 8) Hardware Wiring
 
-- Sensitive files (`.env`, `secrets.ini`) are not committed
-- Example configuration files are provided
-- Designed for modular expansion and future hardware integration
+## PCA9685
+
+- VCC → 3.3V (RPi)
+- GND → GND (shared)
+- SDA → GPIO2 (Pin 3)
+- SCL → GPIO3 (Pin 5)
+
+## Servos
+
+- External 5V supply required
+- DO NOT power from Raspberry Pi
+- Common GND mandatory
+
+## Laser (MOSFET)
+
+- GPIO18 (Pin 12) → Gate
+- GND → Common GND
+- Laser powered externally (5V)
+
+Recommended:
+
+- 220Ω resistor (GPIO → Gate)
+- 10kΩ pull-down (Gate → GND)
 
 ---
 
-## License
+# Important Notes
 
-Educational and experimental purposes.
+- GPIO numbering uses BCM mode
+- GPIO18 = physical Pin 12
+- Do NOT confuse GPIO number with pin number
+- Only one process can use the camera at a time
+- Tracking behavior depends heavily on tuning parameters
+- MJPEG stream may introduce slight latency (browser-dependent)
+
+---
+
+# Next Steps
+
+- Implement state machine (SCAN / TRACK / FIRE)
+- Improve detection robustness (reduce false positives)
+- Add MQTT integration
+- Connect to backend + frontend
+- Extend detection to birds (outdoor scenario)
+- Improve tracking responsiveness and accuracy

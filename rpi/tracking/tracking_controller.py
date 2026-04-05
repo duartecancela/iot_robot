@@ -1,7 +1,9 @@
 import time
+import threading
 import requests
 
 from servos.servo_controller import ServoController
+from laser.laser_controller import fire
 
 DETECTIONS_URL = "http://127.0.0.1:8080/detections"
 HTTP_TIMEOUT = 0.25
@@ -57,6 +59,14 @@ TILT_MAX = 140.0
 # Target loss handling
 # --------------------
 TARGET_LOST_TIMEOUT = 0.50
+
+# --------------------
+# Laser firing logic
+# --------------------
+CENTER_HOLD_TIME = 0.6
+LASER_COOLDOWN = 4.0
+CENTER_FIRE_X = 0.14
+CENTER_FIRE_Y = 0.18
 
 # --------------------
 # Helpers
@@ -151,6 +161,13 @@ def get_detection(last_center=None):
         return None
 
 
+def fire_laser_async(state):
+    try:
+        fire()
+    finally:
+        state["laser_active"] = False
+
+
 # --------------------
 # Main loop
 # --------------------
@@ -169,6 +186,11 @@ def main():
     moving_x = False
     moving_y = False
 
+    stable_since = None
+    last_fire_time = 0.0
+    fired_for_current_lock = False
+    laser_state = {"laser_active": False}
+
     sc.set(pan, tilt)
     print(f"Start: pan={pan:.1f} tilt={tilt:.1f}")
 
@@ -183,6 +205,8 @@ def main():
                 last_seen_time = now
             else:
                 if last_center is None or (now - last_seen_time) > TARGET_LOST_TIMEOUT:
+                    stable_since = None
+                    fired_for_current_lock = False
                     time.sleep(LOOP_DELAY)
                     continue
                 cx, cy = last_center
@@ -228,13 +252,47 @@ def main():
 
             sc.set(pan, tilt)
 
+            centered_for_fire = (
+                abs(ex) < CENTER_FIRE_X and
+                abs(ey) < CENTER_FIRE_Y
+            )
+
+            if centered_for_fire:
+                if stable_since is None:
+                    stable_since = now
+            else:
+                stable_since = None
+                fired_for_current_lock = False
+
+            ready_to_fire = (
+                stable_since is not None and
+                (now - stable_since) >= CENTER_HOLD_TIME and
+                not fired_for_current_lock and
+                not laser_state["laser_active"] and
+                (now - last_fire_time) >= LASER_COOLDOWN
+            )
+
+            if ready_to_fire:
+                laser_state["laser_active"] = True
+                fired_for_current_lock = True
+                last_fire_time = now
+
+                threading.Thread(
+                    target=fire_laser_async,
+                    args=(laser_state,),
+                    daemon=True,
+                ).start()
+
             if DEBUG:
+                hold_time = 0.0 if stable_since is None else (now - stable_since)
                 print(
                     f"cx={cx_use:.1f} cy={cy_use:.1f} "
                     f"ex={ex:+.3f} ey={ey:+.3f} "
                     f"mx={moving_x} my={moving_y} "
                     f"d_pan={d_pan:+.3f} d_tilt={d_tilt:+.3f} "
-                    f"pan={pan:.1f} tilt={tilt:.1f}"
+                    f"pan={pan:.1f} tilt={tilt:.1f} "
+                    f"centered={centered_for_fire} hold={hold_time:.2f}s "
+                    f"laser_active={laser_state['laser_active']}"
                 )
 
             time.sleep(LOOP_DELAY)
