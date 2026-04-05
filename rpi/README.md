@@ -224,22 +224,6 @@ Tracking features:
 - GND → Common GND
 - Laser powered externally (5V)
 
-Recommended:
-
-- 220Ω resistor (GPIO → Gate)
-- 10kΩ pull-down (Gate → GND)
-
----
-
-# Important Notes
-
-- GPIO numbering uses BCM mode
-- GPIO18 = physical Pin 12
-- Do NOT confuse GPIO number with pin number
-- Only one process can use the camera at a time
-- Tracking behavior depends heavily on tuning parameters
-- MJPEG stream may introduce slight latency (browser-dependent)
-
 ---
 
 # Next Steps
