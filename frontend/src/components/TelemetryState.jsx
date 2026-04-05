@@ -19,6 +19,7 @@ function Cell({ label, value, Icon, variant = 'base' }) {
     imu: 'bg-slate-50/70 border-slate-200/70',
     bme: 'bg-emerald-50/55 border-emerald-200/60',
     drive: 'bg-rose-50/55 border-rose-200/60',
+    tracking: 'bg-indigo-50/60 border-indigo-200/60',
   }
 
   return (
@@ -71,8 +72,24 @@ export default function TelemetryState() {
   const slow = data?.slow?.json
   const driveState = data?.drive?.state?.json
   const driveAck = data?.drive?.ack?.json
+  const tracking = data?.tracking
 
-  // NEW: 24h time formatter (HH:MM:SS)
+  // 🔥 FIXED toggle
+  async function toggleTracking() {
+    if (!tracking) return
+
+    const newValue = !tracking.tracking_allowed
+
+    await fetch(`${BACKEND_URL}/tracking`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tracking_allowed: newValue }),
+    })
+
+    // refresh imediato (UX melhor)
+    load()
+  }
+
   const ts = data?.ts ?? Date.now()
   const time24 = new Date(ts).toLocaleTimeString('pt-PT', {
     hour12: false,
@@ -83,7 +100,6 @@ export default function TelemetryState() {
 
   return (
     <section className="mt-4">
-      {/* Header */}
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-stone-900">Telemetry</h2>
@@ -111,7 +127,6 @@ export default function TelemetryState() {
         </button>
       </div>
 
-      {/* Content */}
       <div className="rounded border border-stone-200 bg-stone-50/40 p-2">
         {error && (
           <div className="mb-2 text-xs text-red-700">
@@ -120,39 +135,41 @@ export default function TelemetryState() {
         )}
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {/* ToF */}
+
           <Cell label="ToF FL" value={fast?.tof?.fl} Icon={ArrowsRightLeftIcon} variant="tof" />
           <Cell label="ToF FR" value={fast?.tof?.fr} Icon={ArrowsRightLeftIcon} variant="tof" />
 
-          {/* IMU */}
           <Cell label="Pitch" value={fast?.imu?.pitch} Icon={ArrowPathIcon} variant="imu" />
           <Cell label="Roll" value={fast?.imu?.roll} Icon={ArrowPathIcon} variant="imu" />
 
-          {/* BME */}
           <Cell label="Temp °C" value={slow?.bme?.t} Icon={SunIcon} variant="bme" />
           <Cell label="Hum %" value={slow?.bme?.h} Icon={CloudIcon} variant="bme" />
-          <Cell
-            label="Press hPa"
-            value={slow?.bme?.p}
-            Icon={AdjustmentsHorizontalIcon}
-            variant="bme"
-          />
+          <Cell label="Press hPa" value={slow?.bme?.p} Icon={AdjustmentsHorizontalIcon} variant="bme" />
 
-          {/* Drive */}
-          <Cell
-            label="Drive"
-            value={driveState ? `${driveState.left},${driveState.right}` : null}
-            Icon={TruckIcon}
-            variant="drive"
-          />
+          <Cell label="Drive" value={driveState ? `${driveState.left},${driveState.right}` : null} Icon={TruckIcon} variant="drive" />
+          <Cell label="Ack" value={driveAck ? (driveAck.ok ? 'OK' : 'ERR') : null} Icon={driveAck?.ok ? CheckCircleIcon : XCircleIcon} variant="drive" />
 
-          <Cell
-            label="Ack"
-            value={driveAck ? (driveAck.ok ? 'OK' : 'ERR') : null}
-            Icon={driveAck?.ok ? CheckCircleIcon : XCircleIcon}
-            variant="drive"
-          />
+          {/* TRACKING */}
+          <Cell label="Moving" value={tracking?.robot_is_moving ? 'YES' : 'NO'} variant="tracking" />
+          <Cell label="Tracking Active" value={tracking?.tracking_active ? 'ON' : 'OFF'} variant="tracking" />
+          <Cell label="Tracking Allowed" value={tracking?.tracking_allowed ? 'YES' : 'NO'} variant="tracking" />
+
         </div>
+
+        <div className="mt-3 flex justify-center">
+          <button
+            onClick={toggleTracking}
+            disabled={!tracking}
+            className={`px-4 py-2 text-sm rounded ${
+              tracking?.tracking_allowed
+                ? 'bg-red-500 text-white'
+                : 'bg-green-500 text-white'
+            }`}
+          >
+            {tracking?.tracking_allowed ? 'Disable Tracking' : 'Enable Tracking'}
+          </button>
+        </div>
+
       </div>
     </section>
   )

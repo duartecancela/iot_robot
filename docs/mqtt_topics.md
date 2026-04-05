@@ -2,101 +2,150 @@
 
 ## 📌 Overview
 
-This document describes the MQTT topics used in the IoT Robot project, including:
-- Existing topics
-- Topics to be implemented (vision and tracking)
-- Recommended structure
+This document describes the MQTT topics used in the IoT Robot project.
+
+It reflects the **current implemented system**, including:
+- ESP32 telemetry and drive state
+- Backend tracking logic
+- Frontend control integration
 
 ---
 
-## ✅ Existing Topics
+## ✅ Implemented Topics
 
-### 🔹 Control (Frontend → Robot)
+---
 
-- **robot/cmd/drive**
-  - Sends movement commands (forward, backward, left, right, stop)
+### 🔹 Control (Frontend → Backend → ESP32)
 
-- **robot/cmd/drive/ack**
-  - Acknowledgment from ESP32
+#### Drive Command
+```
+robot/cmd/drive
+```
+
+- Sent by backend (from frontend input)
+- Controls robot movement
+
+**Example:**
+```json
+{"left":120,"right":120}
+```
+
+---
+
+#### Drive ACK
+```
+robot/cmd/drive/ack
+```
+
+- Sent by ESP32
+- Confirms command reception and execution
+
+**Example:**
+```json
+{"ok":true,"left":120,"right":120}
+```
 
 ---
 
 ### 🔹 Robot State
 
-- **robot/state/drive**
-  - Current robot movement state
-  - Example:
-    ```json
-    {
-      "moving": true
-    }
-    ```
+#### Applied Drive State (ESP32 → Backend)
+
+```
+robot/state/drive
+```
+
+- **Single source of truth for robot movement**
+- Published by ESP32 (`main.cpp`)
+- Retained topic
+
+**Example:**
+```json
+{
+  "left": 100,
+  "right": 100,
+  "moving": true,
+  "ts": 112210
+}
+```
+
+### Fields
+
+| Field | Description |
+|------|------------|
+| `left` | Applied left motor value |
+| `right` | Applied right motor value |
+| `moving` | `true` if robot is moving |
+| `ts` | Timestamp (`millis()`) |
 
 ---
 
 ### 🔹 Telemetry
 
-- **robot/telemetry**
-- **robot/telemetry/fast**
-- **robot/telemetry/slow**
-
-Contains:
-- sensor data
-- system state
-- performance metrics
-
----
-
-## 🆕 Topics to Implement (Vision + Tracking)
-
-### 🔹 Vision (Raspberry Pi → Frontend)
-
-- **robot/vision/status**
-
-Used to send object detection data.
-
-**Example:**
-```json
-{
-  "detected": true,
-  "label": "cell_phone",
-  "confidence": 0.87,
-  "timestamp": 1712300000.12
-}
+#### Fast telemetry
+```
+robot/telemetry/fast
 ```
 
-When no object is detected:
+**Content:**
+- ToF sensors
+- IMU
+
 ```json
 {
-  "detected": false,
-  "timestamp": 1712300001.45
+  "tof": { "fl": 329, "fr": 381 },
+  "imu": { "pitch": 1.31, "roll": 1.61 }
 }
 ```
 
 ---
 
-### 🔹 Tracking (Raspberry Pi → Frontend)
+#### Slow telemetry
+```
+robot/telemetry/slow
+```
 
-- **robot/tracking/status**
+**Content:**
+- BME280 data
 
-Indicates current tracking state.
+```json
+{
+  "bme": { "t": 21.35, "h": 52.28, "p": 992.64 }
+}
+```
+
+---
+
+## 🔹 Tracking System (IMPLEMENTED)
+
+---
+
+### Tracking Status (Backend → Frontend)
+
+```
+robot/tracking/status
+```
+
+Published by backend.
 
 **Example:**
 ```json
 {
-  "tracking_active": true,
   "tracking_allowed": true,
+  "tracking_active": true,
   "robot_is_moving": false
 }
 ```
 
 ---
 
-### 🔹 Tracking Command (Frontend → Raspberry Pi)
+### Tracking Command (Frontend → Backend)
 
-- **robot/tracking/command**
+```
+robot/tracking/command
+```
 
-Allows manual enable/disable of tracking.
+Used to enable/disable tracking.
 
 **Example:**
 ```json
@@ -105,27 +154,21 @@ Allows manual enable/disable of tracking.
 }
 ```
 
-or
+---
 
-```json
-{
-  "tracking_allowed": false
-}
-```
+## 🧠 Tracking Logic (Backend)
+
+Tracking is **NOT decided by the ESP32**.
+
+It is implemented in the backend using:
+
+- `robot/state/drive`
+- `tracking_allowed`
+- stop timer
 
 ---
 
-## 🧠 System Logic
-
-### Tracking Rules
-
-Tracking is only active when:
-
-- The robot is **not moving**
-- It has been stopped for at least **5 seconds**
-- Tracking is **enabled from the frontend**
-
-### Cases
+### Rules
 
 | Condition | Tracking |
 |----------|--------|
@@ -136,27 +179,39 @@ Tracking is only active when:
 
 ---
 
-## 🖥️ Frontend Behavior
+### Logic Summary
 
-The frontend should:
-
-### Display:
-- Video stream
-- Detection status:
-  - Object detected / not detected
-- Tracking status:
-  - Active / Inactive
-- Robot state:
-  - Moving / Stopped
-
-### Provide:
-- Button to enable/disable tracking
+```text
+moving = true  → tracking OFF
+moving = false → start timer
+after 5s       → tracking ON (if allowed)
+```
 
 ---
 
-## 🧱 Recommended MQTT Structure
+## 🧱 MQTT Architecture
 
 ```text
+Frontend
+   ↓ HTTP
+Backend
+   ↓ MQTT
+Broker
+   ↓ MQTT
+ESP32
+```
+
+### Important Notes
+
+- Frontend does NOT talk MQTT directly
+- ESP32 does NOT implement tracking logic
+- Backend is the **decision layer**
+
+---
+
+## 🧭 Topic Structure
+
+```
 robot/
 ├── cmd/
 │   └── drive
@@ -165,51 +220,75 @@ robot/
 ├── telemetry/
 │   ├── fast
 │   └── slow
-├── vision/
-│   └── status
 ├── tracking/
 │   ├── status
 │   └── command
+├── vision/
+│   └── status   # future
 ```
 
 ---
 
 ## 🔧 MQTT Debug
 
-View all topics:
-
-```bash
-mosquitto_sub -h localhost -t "#" -v
-```
-
-Filter robot topics:
-
+### View all robot topics
 ```bash
 mosquitto_sub -h localhost -t "robot/#" -v
 ```
 
 ---
 
-## 🎯 Current Goal
+### View tracking only
+```bash
+mosquitto_sub -h localhost -t "robot/tracking/#" -v
+```
 
-Implement a simple system:
+---
 
-- Object detection (cell_phone)
-- MQTT publishing
-- Frontend visualization
-- Tracking only when:
-  - robot stopped ≥ 5 seconds
-  - tracking enabled
+### Send drive command
+```bash
+mosquitto_pub -h localhost -t "robot/cmd/drive" -m "100,100"
+```
+
+---
+
+### Stop robot
+```bash
+mosquitto_pub -h localhost -t "robot/cmd/drive" -m "0,0"
+```
+
+---
+
+### Enable tracking
+```bash
+mosquitto_pub -h localhost -t "robot/tracking/command" -m '{"tracking_allowed":true}'
+```
+
+---
+
+### Disable tracking
+```bash
+mosquitto_pub -h localhost -t "robot/tracking/command" -m '{"tracking_allowed":false}'
+```
+
+---
+
+## 🎯 Current State
+
+- ✅ Drive control via MQTT
+- ✅ Telemetry (fast + slow)
+- ✅ Applied drive state with `moving`
+- ✅ Tracking state machine (backend)
+- ✅ Tracking enable/disable via MQTT + HTTP
+- 🔧 Vision integration (next step)
 
 ---
 
 ## 🚀 Next Steps
 
-- [ ] Implement `robot/vision/status`
-- [ ] Implement `robot/tracking/status`
-- [ ] Implement `robot/tracking/command`
-- [ ] Integrate MQTT in frontend
-- [ ] Add tracking control button
-- [ ] Display states in UI
+- Implement `robot/vision/status`
+- Integrate object detection (camera)
+- Link tracking to servo + laser
+- Add bounding box visualization in frontend
 
 ---

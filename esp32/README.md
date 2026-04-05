@@ -30,13 +30,14 @@ The Raspberry Pi acts as the **central controller**, hosting:
 
 ## Architecture
 
-```
+```text
 Web Interface
      │
      ▼
 Raspberry Pi (MQTT client / server)
   ├─ Vision processing (camera)
   ├─ Pest detection logic
+  ├─ Tracking control logic
   ├─ Servo + laser commands
   └─ Telemetry consumer
      │
@@ -44,7 +45,7 @@ Raspberry Pi (MQTT client / server)
 ESP32 (MQTT client)
   ├─ Motor control (4WD)
   ├─ Sensor acquisition
-  ├─ Servo and laser actuation
+  ├─ Applied drive state publisher
   └─ Telemetry publisher
 ```
 
@@ -59,11 +60,9 @@ The ESP32 is responsible for **real-time and safety-critical tasks**:
   - **VL53L0X (ToF)** – front-left and front-right obstacle detection
   - **IMU (MPU6050)** – pitch and roll
   - **BME280** – temperature, humidity, pressure
-- Actuation:
-  - servo motors (camera pan/tilt)
-  - laser module (on/off, aiming)
 - MQTT telemetry publishing
 - **MQTT remote drive command reception (RX) with ACK confirmation**
+- Publishing the **applied drive state** used by the backend/frontend
 
 The ESP32 continues operating **independently** even if Wi-Fi or MQTT connectivity is temporarily lost.
 
@@ -71,25 +70,25 @@ The ESP32 continues operating **independently** even if Wi-Fi or MQTT connectivi
 
 ## Project Structure
 
-```
+```text
 ESP32_BTS_Driver/
-├── .vscode/                 # VS Code configuration
-├── include/                 # Header files (.h)
-├── lib/                     # Local libraries (if any)
+├── .vscode/                   # VS Code configuration
+├── include/                   # Header files (.h)
+├── lib/                       # Local libraries (if any)
 ├── src/
 │   ├── bluetooth_control.cpp  # Bluetooth motor control
 │   ├── bme280_sensor.cpp      # BME280 environmental sensor
 │   ├── imu_sensor.cpp         # IMU (MPU6050)
 │   ├── main.cpp               # Main loop and system integration
 │   ├── motor_control.cpp      # Motor drivers and logic
-│   ├── mqtt_manager.cpp       # MQTT client (TX + RX + ACK)
+│   ├── mqtt_manager.cpp       # MQTT client (RX + ACK)
 │   ├── vl53l0x_sensor.cpp     # ToF sensors (front-left / front-right)
 │   └── wifi_manager.cpp       # Wi-Fi management (WiFiMulti)
-├── test/                     # Tests (optional)
+├── test/                      # Tests (optional)
 ├── .gitignore
 ├── platformio.ini
-├── secrets.example.ini       # Example configuration
-├── secrets.ini               # Private configuration (not committed)
+├── secrets.example.ini        # Example configuration
+├── secrets.ini                # Private configuration (not committed)
 └── README.md
 ```
 
@@ -113,7 +112,7 @@ ESP32_BTS_Driver/
 
 ### 1) Fast telemetry (navigation and stability)
 **Topic**
-```
+```text
 robot/telemetry/fast
 ```
 
@@ -133,7 +132,7 @@ robot/telemetry/fast
 
 ### 2) Slow telemetry (environmental data)
 **Topic**
-```
+```text
 robot/telemetry/slow
 ```
 
@@ -156,26 +155,26 @@ robot/telemetry/slow
 The ESP32 supports **remote motor control via MQTT**, in addition to Bluetooth-based local control.
 
 ### Command and ACK topics
-- **Drive command topic:**  
-  ```
+- **Drive command topic:**
+  ```text
   robot/cmd/drive
   ```
-- **ACK (acknowledgement) topic:**  
-  ```
+- **ACK (acknowledgement) topic:**
+  ```text
   robot/cmd/drive/ack
   ```
 
 The ACK mechanism provides **positive confirmation** that the ESP32:
-1. Received the MQTT message  
-2. Parsed the payload correctly  
-3. Applied the motor command  
+1. Received the MQTT message
+2. Parsed the payload correctly
+3. Applied the motor command
 
 ---
 
 ### Supported drive command payloads
 
 #### 1) CSV format (recommended for quick CLI testing)
-```
+```text
 120,120
 -120,120
 0,0
@@ -204,36 +203,85 @@ Motor values are automatically clamped to the range `[-255, 255]`.
 
 ---
 
-### Applied Drive State (retained)
+## Applied Drive State (retained)
 
 In addition to command reception and ACK confirmation, the ESP32 publishes
-the **drive command that was actually applied**.
+the **drive state that was actually applied**.
 
-This separation allows clients to distinguish between:
+This allows clients to distinguish between:
 - **Commanded** → what was requested
 - **Applied** → what the robot really executed
 
-#### Applied state topic
-- **Topic:**  
-  ```
+### Applied state topic
+- **Topic:**
+  ```text
   robot/state/drive
   ```
 - **Direction:** ESP32 → clients
 - **Retained:** Yes
 
-#### Payload example
+### Payload example
 ```json
-{"left":-200,"right":200}
+{
+  "left": -200,
+  "right": 200,
+  "moving": true,
+  "ts": 123456
+}
 ```
 
-This payload reflects the final motor values after parsing and clamping.
+### Payload fields
+- `left` → applied left motor value
+- `right` → applied right motor value
+- `moving` → `true` if the robot is currently moving, otherwise `false`
+- `ts` → local ESP32 timestamp (`millis()`)
+
+The `moving` flag is derived from the applied motor values:
+
+```text
+moving = (left != 0 || right != 0)
+```
 
 Because the message is **retained**, dashboards and monitoring tools
 immediately receive the latest applied state upon subscription.
 
 This topic is the **single source of truth** for the robot drive state
-and should be used by backends and frontends to display
-the **actual robot motion**.
+and should be used by backends and frontends to display the
+**actual robot motion**.
+
+---
+
+## Tracking Integration
+
+The `robot/state/drive` topic is also used by the Raspberry Pi / backend
+to decide whether tracking may run.
+
+### Simplified logic
+- If `moving = true` → tracking must remain disabled
+- If `moving = false` → backend starts a stop timer
+- If the robot stays stopped for at least 5 seconds and tracking is allowed → tracking becomes active
+
+The ESP32 only publishes the applied drive state.
+The tracking decision itself is handled by the Raspberry Pi / backend.
+
+---
+
+## Drive State Publishing Design
+
+The applied drive state is published by **`main.cpp` only**.
+
+This is intentional:
+- `main.cpp` knows the **final applied motor values**
+- it covers both **Bluetooth** and **MQTT** control paths
+- it guarantees a single consistent publication format
+
+The file `mqtt_manager.cpp` is responsible for:
+- receiving MQTT drive commands
+- parsing payloads
+- clamping motor values
+- publishing ACK responses
+
+It no longer publishes `robot/state/drive`, which avoids duplicate or inconsistent state messages.
 
 ---
 
@@ -264,6 +312,12 @@ mosquitto_pub -h <BROKER_IP> -t robot/cmd/drive -m "0,0"
 ### Send drive command (JSON)
 ```bash
 mosquitto_pub -h <BROKER_IP> -t robot/cmd/drive -m '{"left":120,"right":120}'
+```
+
+### Example retained drive state
+```bash
+robot/state/drive {"left":100,"right":100,"moving":true,"ts":112210}
+robot/state/drive {"left":0,"right":0,"moving":false,"ts":117452}
 ```
 
 ---
@@ -318,6 +372,7 @@ The Raspberry Pi is responsible for:
 - Hosting the **web-based control interface**
 - Running **computer vision algorithms**
 - Detecting pests using the camera feed
+- Deciding whether tracking is allowed to run
 - Sending control commands to the ESP32 via MQTT:
   - movement
   - camera pan/tilt
@@ -332,6 +387,7 @@ The camera is mounted on a **pan/tilt gimbal**, with the laser aligned to the ca
 - Local control and safety first
 - MQTT used for coordination and telemetry
 - Clear separation between low-level and high-level logic
+- Single source of truth for applied drive state
 - Modular and extensible design
 - Suitable for research, prototyping and field deployment
 
@@ -343,8 +399,10 @@ The camera is mounted on a **pan/tilt gimbal**, with the laser aligned to the ca
 - ✅ MQTT telemetry publishing (fast and slow topics)
 - ✅ MQTT remote drive control with ACK confirmation
 - ✅ Applied drive state published via MQTT (`robot/state/drive`)
+- ✅ `moving` flag included in drive state payload
 - ✅ ToF, IMU and BME280 sensors working
 - ✅ Wi-Fi with fallback networks
+- ✅ Backend integration for tracking gating based on robot movement
 - 🔧 Vision-based pest detection under development
 - 🔧 Web interface and laser targeting in progress
 

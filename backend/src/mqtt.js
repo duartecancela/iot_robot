@@ -1,6 +1,4 @@
 // src/mqtt.js
-// MQTT layer: connect/subscribe + message routing + allowlist.
-// Comments in English as requested.
 
 export function isAllowedIncomingTopicFactory({
   TOPIC_STATE_DRIVE,
@@ -11,12 +9,66 @@ export function isAllowedIncomingTopicFactory({
     if (topic.startsWith("robot/telemetry/")) return true;
     if (topic === TOPIC_STATE_DRIVE) return true;
     if (topic === TOPIC_CMD_DRIVE_ACK) return true;
+    if (topic === "robot/tracking/command") return true;
     return false;
   };
 }
 
 export function bumpTopic(counters, topic) {
   counters.byTopic[topic] = (counters.byTopic[topic] || 0) + 1;
+}
+
+function ensureTrackingState(state) {
+  if (!state.tracking) {
+    state.tracking = {
+      robot_is_moving: false,
+      stop_timestamp: null,
+      tracking_allowed: true,
+      tracking_active: false,
+    };
+  }
+}
+
+function buildTrackingStatus(state) {
+  return {
+    tracking_allowed: state.tracking.tracking_allowed,
+    tracking_active: state.tracking.tracking_active,
+    robot_is_moving: state.tracking.robot_is_moving,
+  };
+}
+
+function publishTrackingStatus(mqttClient, state, io) {
+  const payload = buildTrackingStatus(state);
+
+  mqttClient.publish("robot/tracking/status", JSON.stringify(payload));
+  io.emit("tracking:status", {
+    topic: "robot/tracking/status",
+    json: payload,
+    ts: Date.now(),
+  });
+}
+
+function recomputeTrackingState(state, now = Date.now()) {
+  ensureTrackingState(state);
+
+  const prevActive = state.tracking.tracking_active;
+
+  if (state.tracking.robot_is_moving) {
+    state.tracking.tracking_active = false;
+    state.tracking.stop_timestamp = null;
+  } else {
+    if (state.tracking.stop_timestamp === null) {
+      state.tracking.stop_timestamp = now;
+    }
+
+    const stoppedLongEnough =
+      now - state.tracking.stop_timestamp >= 5000;
+
+    state.tracking.tracking_active =
+      state.tracking.tracking_allowed && stoppedLongEnough;
+  }
+
+  return prevActive !== state.tracking.tracking_active;
 }
 
 export function setupMqtt({
@@ -31,6 +83,8 @@ export function setupMqtt({
   console.log("MQTT_URL =", MQTT_URL);
   console.log("MQTT_TOPIC =", MQTT_TOPIC);
 
+  ensureTrackingState(state);
+
   const isAllowedIncomingTopic = isAllowedIncomingTopicFactory({
     TOPIC_STATE_DRIVE,
     TOPIC_CMD_DRIVE_ACK,
@@ -44,16 +98,22 @@ export function setupMqtt({
       else console.log("MQTT subscribed:", MQTT_TOPIC);
     });
 
-    // Keep required subscriptions (same as current code)
-    mqttClient.subscribe([TOPIC_STATE_DRIVE, TOPIC_CMD_DRIVE_ACK], (err) => {
-      if (err) console.log("MQTT subscribe (required) error:", err.message);
-      else
-        console.log(
-          "MQTT subscribed (required):",
-          TOPIC_STATE_DRIVE,
-          TOPIC_CMD_DRIVE_ACK
-        );
-    });
+    mqttClient.subscribe(
+      [TOPIC_STATE_DRIVE, TOPIC_CMD_DRIVE_ACK, "robot/tracking/command"],
+      (err) => {
+        if (err) console.log("MQTT subscribe (required) error:", err.message);
+        else {
+          console.log(
+            "MQTT subscribed (required):",
+            TOPIC_STATE_DRIVE,
+            TOPIC_CMD_DRIVE_ACK,
+            "robot/tracking/command"
+          );
+
+          publishTrackingStatus(mqttClient, state, io);
+        }
+      }
+    );
   });
 
   mqttClient.on("reconnect", () => console.log("MQTT: reconnect"));
@@ -84,7 +144,6 @@ export function setupMqtt({
 
     state.lastMessage = msg;
 
-    // Route messages (same behavior as current code)
     if (topic === "robot/telemetry/fast") {
       state.lastFast = msg;
       io.emit("telemetry:fast", msg);
@@ -94,9 +153,44 @@ export function setupMqtt({
     } else if (topic === TOPIC_STATE_DRIVE) {
       state.lastDriveState = msg;
       io.emit("drive:state", msg);
+
+      const drive = msg.json || {};
+      state.tracking.robot_is_moving =
+        typeof drive.moving === "boolean"
+          ? drive.moving
+          : (drive.left !== 0 || drive.right !== 0);
+
+      if (state.tracking.robot_is_moving) {
+        state.tracking.stop_timestamp = null;
+      } else if (state.tracking.stop_timestamp === null) {
+        state.tracking.stop_timestamp = Date.now();
+      }
+
+      recomputeTrackingState(state);
+      publishTrackingStatus(mqttClient, state, io);
+    } else if (topic === "robot/tracking/command") {
+      const cmd = msg.json || {};
+
+      if (typeof cmd.tracking_allowed === "boolean") {
+        state.tracking.tracking_allowed = cmd.tracking_allowed;
+        recomputeTrackingState(state);
+        publishTrackingStatus(mqttClient, state, io);
+        console.log("Tracking allowed set to:", cmd.tracking_allowed);
+      }
     } else if (topic === TOPIC_CMD_DRIVE_ACK) {
       state.lastDriveAck = msg;
       io.emit("drive:ack", msg);
     }
   });
+
+  // Periodic tracking reevaluation so the 5-second stop timer can complete
+  setInterval(() => {
+    if (!mqttClient.connected) return;
+
+    const changed = recomputeTrackingState(state);
+
+    if (changed) {
+      publishTrackingStatus(mqttClient, state, io);
+    }
+  }, 200);
 }

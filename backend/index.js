@@ -1,4 +1,3 @@
-// index.js
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -30,7 +29,7 @@ const TOPIC_CMD_DRIVE =
   process.env.MQTT_TOPIC_CMD_DRIVE || "robot/cmd/drive";
 
 // --------------------
-// Shared State (same fields)
+// Shared State
 // --------------------
 const state = {
   lastFast: null,
@@ -47,6 +46,14 @@ const state = {
 };
 
 // --------------------
+// MQTT client
+// --------------------
+const mqttClient = mqtt.connect(MQTT_URL, {
+  reconnectPeriod: 2000,
+  connectTimeout: 5000,
+});
+
+// --------------------
 // HTTP + Socket.IO
 // --------------------
 const app = createHttpApp({
@@ -55,20 +62,15 @@ const app = createHttpApp({
   TOPIC_STATE_DRIVE,
   TOPIC_CMD_DRIVE_ACK,
   state,
+  mqttClient,
 });
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
 // --------------------
-// MQTT client (same options)
-// --------------------
-const mqttClient = mqtt.connect(MQTT_URL, {
-  reconnectPeriod: 2000,
-  connectTimeout: 5000,
-});
-
 // Wire MQTT behavior
+// --------------------
 setupMqtt({
   mqttClient,
   MQTT_URL,
@@ -79,7 +81,9 @@ setupMqtt({
   io,
 });
 
-// Wire WS behavior (drive commands)
+// --------------------
+// Wire WS behavior
+// --------------------
 setupWebSocket({
   io,
   mqttClient,

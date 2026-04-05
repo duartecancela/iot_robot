@@ -2,8 +2,12 @@
 
 Web-based frontend for the IoT Robot Platform.
 
-This application provides a real-time interface to visualize robot telemetry and send control commands.  
-It communicates with the backend using **Socket.IO** and follows a clean, component-based architecture.
+This application provides a real-time interface to visualize robot telemetry,
+control movement, and manage **tracking behavior**.
+
+It communicates with the backend using:
+- **HTTP (REST)** → aggregated state + commands
+- **Socket.IO** → real-time updates
 
 ---
 
@@ -12,78 +16,64 @@ It communicates with the backend using **Socket.IO** and follows a clean, compon
 - React
 - Vite
 - Tailwind CSS
-- **Socket.IO client** (real-time communication with backend)
-- **Heroicons (`@heroicons/react`)** – UI icons
+- Socket.IO client
+- Heroicons (`@heroicons/react`)
 
 ---
 
 ## Features
 
-- Real-time telemetry visualization
-- **Real-time drive control via joystick**
-- Clean layout with reusable components
-- Responsive UI using Tailwind CSS
-- Environment-based configuration (Vite)
-- Minimalist, compact dashboard with semantic icons
+- Real-time telemetry dashboard
+- Differential drive joystick control
+- Drive ACK visualization
+- **Tracking state visualization (NEW)**
+- **Tracking enable/disable control (NEW)**
+- Responsive UI with Tailwind CSS
+- Clean and modular component structure
 
 ---
 
 ## Requirements
 
 - Node.js >= 18
-- Backend server running (see `backend/README.md`)
-- MQTT broker running (used indirectly via backend)
+- Backend server running
+- MQTT broker (used indirectly via backend)
 
 ---
 
 ## Configuration
 
-The frontend uses **Vite environment variables**.
-
-Create a `.env` file based on the example:
+Create a `.env` file:
 
 ```bash
 cp .env.example .env
 ```
 
-### Environment variables
+### Variables
 
 | Variable | Description | Example |
 |--------|------------|--------|
 | `VITE_BACKEND_URL` | Backend base URL | `http://localhost:3001` |
 
-> ⚠️ All frontend environment variables **must start with `VITE_`**.
-
-The `.env` file is not committed.  
-Default values are documented in `.env.example`.
+> ⚠️ Must start with `VITE_`
 
 ---
 
 ## Setup
 
-Install dependencies:
-
 ```bash
 npm install
 ```
 
-This frontend relies on:
-- `socket.io-client` for real-time bidirectional communication
-- `@heroicons/react` for UI icons
-
-Make sure all dependencies are installed before running the application.
-
 ---
 
-## Run (Development)
-
-Start the development server:
+## Run
 
 ```bash
 npm run dev
 ```
 
-Vite will print the local URL, usually:
+Default:
 
 ```
 http://localhost:5173
@@ -96,10 +86,12 @@ http://localhost:5173
 ```
 frontend/
 ├─ src/
-│  ├─ components/     # Reusable UI components (Telemetry, Joystick, etc.)
-│  ├─ App.jsx         # Main application layout
-│  ├─ main.jsx        # Application entry point
-│  └─ index.css       # Tailwind CSS entry
+│  ├─ components/
+│  │   ├─ TelemetryState.jsx   # Telemetry + tracking UI
+│  │   ├─ DriveJoystick.jsx    # Robot control
+│  ├─ App.jsx
+│  ├─ main.jsx
+│  └─ index.css
 ├─ public/
 ├─ .env.example
 ├─ vite.config.js
@@ -108,156 +100,198 @@ frontend/
 
 ---
 
-## Network Access (Development)
-
-When running the frontend on a Raspberry Pi or another machine and accessing it from
-other devices on the same network (PC, phone, tablet), Vite must allow external hosts.
-
-By default, Vite blocks unknown hosts for security reasons.
-
-### Vite configuration
-
-Edit `vite.config.js` and enable network access:
-
-```javascript
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
-
-export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),
-  ],
-  server: {
-    host: true,
-    allowedHosts: 'all'
-  }
-})
-```
-
-Explanation:
-
-| Option | Purpose |
-|------|--------|
-| `host: true` | Allows Vite to listen on all network interfaces (`0.0.0.0`) |
-| `allowedHosts` | Allows external hosts such as `iotrobot.local` |
-
-### Access from other devices
-
-When running on the Raspberry Pi, the frontend can be accessed from any device on the same network:
-
-```
-http://iotrobot.local:5173
-```
-
-Example devices:
-
-- Desktop PC
-- Laptop
-- Smartphone
-- Tablet
-
-This is useful for testing the robot interface on mobile devices.
-
-## Styling
-
-Styling is handled with **Tailwind CSS** using the official Vite plugin.
-
-- Utility-first approach
-- No custom CSS framework
-- Compact, responsive layout
-- Soft, low-contrast color palette for telemetry dashboards
-
-Tailwind is enabled via:
-
-```css
-@import "tailwindcss";
-```
-
----
-
-## Backend Communication
-
-### Architecture Overview
-
-The frontend **never communicates directly with MQTT**.
-
-All communication follows this flow:
+## Architecture Overview
 
 ```
 Frontend (React)
-   ↓ Socket.IO
+   ↓ HTTP / Socket.IO
 Backend (Node.js)
    ↓ MQTT
 Broker
    ↓ MQTT
-Robot (ESP32)
+ESP32 Robot
 ```
 
-This keeps credentials, topics, and validation logic centralized in the backend.
+- Frontend does NOT talk MQTT directly
+- Backend is the only integration layer
 
 ---
 
-### Socket.IO Events
+## Telemetry Dashboard
 
-**Outbound (Frontend → Backend)**
+The `TelemetryState` component displays:
 
-| Event | Payload | Description |
-|-----|--------|------------|
-| `cmd:drive` | `{ left: number, right: number }` | Send motor speeds |
+### Sensors
+- ToF (front-left / front-right)
+- IMU (pitch, roll)
+- BME280 (temperature, humidity, pressure)
 
-Motor values:
-- Range: `-255 .. 255`
-- Left and right motors are sent independently
+### Drive
+- Applied motor values
+- ACK status
 
-**Inbound (Backend → Frontend)**
+### Tracking (NEW)
 
-| Event | Payload | Description |
-|------|--------|------------|
-| `telemetry` | object | Robot telemetry snapshot |
-| `cmd:drive:sent` | `{ ok, left, right, ts }` | Acknowledgement of drive command |
-| `mqtt:message` | `{ topic, raw, ts }` | Raw MQTT messages (debug / advanced UI) |
+| Field | Description |
+|------|------------|
+| `Moving` | Robot is currently moving |
+| `Tracking Active` | Tracking system is running |
+| `Tracking Allowed` | Manual enable/disable state |
+
+---
+
+## Tracking Control (NEW)
+
+The frontend allows enabling/disabling tracking via:
+
+```
+POST /tracking
+```
+
+### Payload
+
+```json
+{
+  "tracking_allowed": true
+}
+```
+
+### Behavior
+
+- Sends command to backend
+- Backend publishes:
+  ```
+  robot/tracking/command
+  ```
+- Backend updates tracking state
+- UI reflects new state automatically
+
+---
+
+## Tracking Logic (System Overview)
+
+Tracking is controlled by the backend based on:
+
+- Robot movement (`robot/state/drive`)
+- Manual control (`tracking_allowed`)
+- Stop timer (5 seconds)
+
+### Rules
+
+- Moving → tracking OFF
+- Stopped < 5s → tracking OFF
+- Stopped ≥ 5s → tracking ON (if allowed)
+
+The frontend **only displays and controls the state**,  
+it does not implement the logic.
 
 ---
 
 ## Drive Joystick
 
-The drive joystick provides **real-time differential drive control**.
+### Behavior
 
-### Behaviour
+- `x` → turning
+- `y` → forward/backward
 
-- Joystick axes:
-  - `x` → turning (left / right)
-  - `y` → forward / backward
-- Mapping:
-  ```
-  left  = y + x
-  right = y - x
-  ```
-- Output values are:
-  - clamped to `-255 .. 255`
-  - sent at a controlled rate (~20 Hz)
-- Releasing the joystick automatically sends `(0, 0)`
+```
+left  = y + x
+right = y - x
+```
 
-### Notes
+- Range: `-255 .. 255`
+- Sends updates ~20 Hz
+- Auto stop on release
 
-- Rate limiting avoids flooding the backend and MQTT broker
-- Commands are only sent when values change
-- Backend performs final validation and clamping
+---
+
+## Backend Communication
+
+### HTTP (Polling)
+
+```
+GET /telemetry/state
+```
+
+Used for:
+- dashboard data
+- tracking state
+- initial load
+
+---
+
+### HTTP (Command)
+
+```
+POST /tracking
+```
+
+Used for:
+- enabling/disabling tracking
+
+---
+
+### Socket.IO (Real-time)
+
+#### Incoming events
+
+| Event | Description |
+|------|------------|
+| `telemetry:fast` | Fast telemetry |
+| `telemetry:slow` | Slow telemetry |
+| `drive:state` | Drive state |
+| `drive:ack` | ACK |
+| `tracking:status` | Tracking updates (NEW) |
+
+#### Outgoing events
+
+| Event | Payload |
+|------|--------|
+| `cmd:drive` | `{ left, right }` |
+
+---
+
+## Network Access
+
+To allow access from other devices:
+
+```js
+server: {
+  host: true,
+  allowedHosts: 'all'
+}
+```
+
+Access via:
+
+```
+http://iotrobot.local:5173
+```
+
+---
+
+## Styling
+
+- Tailwind CSS
+- Utility-first
+- Compact telemetry UI
+- Semantic colors:
+  - amber → ToF
+  - slate → IMU
+  - emerald → environment
+  - rose → drive
+  - indigo → tracking
 
 ---
 
 ## Development Notes
 
-- The frontend does **not** require MQTT libraries
-- Socket.IO is the only real-time dependency
-- All robot control passes through backend validation
-- The UI can be used with:
+- Frontend is **stateless regarding safety**
+- All validation happens in backend
+- Can be used with:
   - real robot
   - simulator
-  - MQTT CLI testing (`mosquitto_pub`)
-- Frontend remains stateless regarding robot safety
+  - MQTT CLI testing
 
 ---
 
@@ -267,24 +301,36 @@ The drive joystick provides **real-time differential drive control**.
   ```bash
   npm install
   ```
-- Connection issues:
-  - Confirm `VITE_BACKEND_URL`
-  - Ensure backend is running and reachable
-- Icon-related errors:
-  - Verify `@heroicons/react` version matches imports
+
+- Backend not reachable:
+  - Check `VITE_BACKEND_URL`
+
+- No telemetry:
+  - Confirm backend + MQTT running
+
+---
+
+## Current Status
+
+- ✅ Telemetry dashboard
+- ✅ Drive control (joystick)
+- ✅ ACK visualization
+- ✅ Tracking state display
+- ✅ Tracking enable/disable button
+- 🔧 Camera + vision integration (next step)
 
 ---
 
 ## Next Steps
 
-- Charts and historical telemetry
-- Camera + pan/tilt control UI
-- Laser / deterrence controls
-- Connection status & latency indicators
-- Mobile-friendly control layout
+- Camera stream in frontend
+- Object detection overlay
+- Laser targeting UI
+- Mobile control improvements
+- Charts / history
 
 ---
 
 ## License
 
-This project is intended for educational and experimental purposes.
+Educational / experimental use

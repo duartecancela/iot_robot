@@ -11,6 +11,7 @@ export function createHttpApp({
   TOPIC_STATE_DRIVE,
   TOPIC_CMD_DRIVE_ACK,
   state,
+  mqttClient,
 }) {
   const app = express();
   app.use(cors());
@@ -23,7 +24,12 @@ export function createHttpApp({
       mqtt: {
         url: MQTT_URL,
         wildcard: MQTT_TOPIC,
-        allowed: ["robot/telemetry/*", TOPIC_STATE_DRIVE, TOPIC_CMD_DRIVE_ACK],
+        allowed: [
+          "robot/telemetry/*",
+          TOPIC_STATE_DRIVE,
+          TOPIC_CMD_DRIVE_ACK,
+          "robot/tracking/command",
+        ],
         dropped: ["robot/cmd/* (except robot/cmd/drive/ack)"],
       },
     });
@@ -41,7 +47,51 @@ export function createHttpApp({
         state: state.lastDriveState,
         ack: state.lastDriveAck,
       },
+      tracking: state.tracking || {
+        robot_is_moving: false,
+        stop_timestamp: null,
+        tracking_allowed: true,
+        tracking_active: false,
+      },
       lastMessage: state.lastMessage,
+    });
+  });
+
+  // POST /tracking
+  app.post("/tracking", (req, res) => {
+    const { tracking_allowed } = req.body || {};
+
+    if (typeof tracking_allowed !== "boolean") {
+      return res.status(400).json({
+        ok: false,
+        error: "tracking_allowed must be a boolean",
+      });
+    }
+
+    if (!mqttClient || !mqttClient.connected) {
+      return res.status(503).json({
+        ok: false,
+        error: "MQTT client is not connected",
+      });
+    }
+
+    const payload = JSON.stringify({ tracking_allowed });
+
+    mqttClient.publish("robot/tracking/command", payload, (err) => {
+      if (err) {
+        return res.status(500).json({
+          ok: false,
+          error: err.message,
+        });
+      }
+
+      return res.json({
+        ok: true,
+        published: {
+          topic: "robot/tracking/command",
+          payload: { tracking_allowed },
+        },
+      });
     });
   });
 

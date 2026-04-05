@@ -1,24 +1,27 @@
 # Backend – Robot Control Server
 
-Node.js backend that acts as a bridge between **MQTT** (robot / simulator) and the **web frontend**.
+Node.js backend that acts as a bridge between **MQTT** (robot / ESP32) and the **web frontend**.
 
-It receives robot telemetry via MQTT, keeps an aggregated state, and exposes the data in **real time** to web clients using **Socket.IO** and simple HTTP endpoints.
+It receives robot telemetry via MQTT, keeps an aggregated state, and exposes the data in **real time** to web clients using **Socket.IO** and HTTP endpoints.
 
-The backend is also responsible for **sending control commands** from the web UI to the robot via MQTT.
+The backend is also responsible for:
+- sending control commands to the robot
+- managing **tracking logic based on robot movement**
 
 ---
 
 ## Features
 
 - Connects to an MQTT broker (e.g. Mosquitto)
-- Subscribes to robot telemetry topics
-- Keeps the last received messages and aggregated state
-- Routes telemetry and state to:
+- Subscribes to robot telemetry and state topics
+- Keeps aggregated robot state
+- Exposes data via:
   - HTTP REST endpoints
   - Socket.IO (real-time)
-- Receives drive commands from frontend and publishes them to MQTT
-- Configuration via environment variables with shared defaults
-- Clear separation of concerns (HTTP / WebSocket / MQTT)
+- Sends drive commands from frontend to robot
+- Implements **tracking control logic**
+- Publishes tracking state via MQTT
+- Configuration via environment variables
 
 ---
 
@@ -41,231 +44,300 @@ The backend is also responsible for **sending control commands** from the web UI
 
 ## Architecture Overview
 
-```
+```text
 Frontend (React)
-   ↓ Socket.IO
+   ↓ HTTP / Socket.IO
 Backend (Node.js)
    ↓ MQTT
 Broker
    ↓ MQTT
-Robot (ESP32) / Simulator
+ESP32 Robot
 ```
 
-The backend is the **single integration point**:
-- Frontend never talks directly to MQTT
-- Robot never talks directly to WebSocket or HTTP
+The backend is the **central coordination layer**:
+- Frontend does not talk directly to MQTT
+- ESP32 does not talk HTTP/WebSocket
+- Backend manages logic and state
 
 ---
 
 ## Backend Structure
 
-The backend is split into **three logical modules**:
-
 ```
 backend/
-├─ index.js        # Application bootstrap (wires everything)
+├─ index.js        # Application bootstrap
 └─ src/
-   ├─ http.js      # Express HTTP server and REST endpoints
-   ├─ ws.js        # Socket.IO real-time communication
-   └─ mqtt.js      # MQTT connection, subscriptions and routing
+   ├─ http.js      # REST API
+   ├─ ws.js        # Socket.IO
+   └─ mqtt.js      # MQTT logic + tracking state machine
 ```
-
-### Responsibilities
-
-- `http.js`
-  - `/health`
-  - `/telemetry/state`
-  - JSON responses for debugging and monitoring
-
-- `ws.js`
-  - Handles WebSocket connections
-  - Sends last known telemetry on connect
-  - Receives `cmd:drive` from frontend
-  - Emits real-time events to clients
-
-- `mqtt.js`
-  - Connects and subscribes to MQTT broker
-  - Filters allowed topics
-  - Routes messages to Socket.IO
-  - Updates shared backend state
 
 ---
 
-## Configuration strategy (important)
+## Core Responsibilities
 
-The backend uses a **two-level configuration approach**:
+### `mqtt.js`
+- MQTT connection and subscriptions
+- Topic filtering
+- Routing messages to frontend
+- Maintaining internal state
+- **Tracking state machine (movement + timer)**
 
-1. **Environment variables (`.env`)** – local overrides (machine-specific)
-2. **Shared defaults** – `shared/config/defaults.json`
+### `http.js`
+- `/health`
+- `/telemetry/state`
+- `/tracking` (NEW)
 
-Resolution order:
-```
-.env  →  shared/config/defaults.json  →  internal fallback
-```
-
-This makes the project portable across different machines  
-(PC, Raspberry Pi, school lab).
-
----
-
-## Environment variables
-
-Create a `.env` file based on the example:
-
-```bash
-cp .env.example .env
-```
-
-### Supported variables
-
-| Variable | Description | Example |
-|--------|------------|--------|
-| `PORT` | HTTP server port | `3001` |
-| `MQTT_URL` | Full MQTT URL (optional) | `mqtt://127.0.0.1:1883` |
-| `MQTT_HOST` | MQTT broker host (used if `MQTT_URL` not set) | `127.0.0.1` |
-| `MQTT_PORT` | MQTT broker port (used if `MQTT_URL` not set) | `1883` |
-| `MQTT_TOPIC` | MQTT topic wildcard to subscribe | `robot/#` |
-| `MQTT_TOPIC_STATE_DRIVE` | Robot drive state topic | `robot/state/drive` |
-| `MQTT_TOPIC_CMD_DRIVE` | Drive command topic | `robot/cmd/drive` |
-| `MQTT_TOPIC_CMD_DRIVE_ACK` | Drive command acknowledgement | `robot/cmd/drive/ack` |
-
-If a variable is not defined, the backend falls back to  
-`shared/config/defaults.json`.
+### `ws.js`
+- Real-time telemetry updates
+- Drive command forwarding
 
 ---
 
-## Setup
+## Tracking Logic (IMPORTANT)
 
-```bash
-npm install
-cp .env.example .env
+The backend implements a **state machine** that controls whether tracking is allowed.
+
+### Inputs
+- `robot/state/drive` (from ESP32)
+- `robot/tracking/command` (from frontend)
+
+### Internal state
+
+```js
+tracking = {
+  robot_is_moving,
+  stop_timestamp,
+  tracking_allowed,
+  tracking_active
+}
 ```
 
-Edit `.env` only if you need to override defaults.
+### Rules
+
+- If robot is moving → tracking OFF
+- If robot stops → start timer
+- If stopped for ≥ 5 seconds → tracking ON
+- If tracking is manually disabled → tracking OFF
+
+### Result
+
+The backend publishes:
+
+```
+robot/tracking/status
+```
 
 ---
 
-## Run
+## MQTT Topics
 
-```bash
-npm run dev
+### Subscribed
+
+- `robot/telemetry/*`
+- `robot/state/drive`
+- `robot/cmd/drive/ack`
+- `robot/tracking/command` ✅ NEW
+
+---
+
+### Published
+
+#### Drive commands
+```
+robot/cmd/drive
 ```
 
-or:
-
-```bash
-node index.js
+#### Tracking status (NEW)
+```
+robot/tracking/status
 ```
 
-Backend will start at:
+### Example
 
-```
-http://localhost:3001
+```json
+{
+  "tracking_allowed": true,
+  "tracking_active": true,
+  "robot_is_moving": false
+}
 ```
 
 ---
 
 ## HTTP Endpoints
 
-### Health check
+### Health
 
 ```
 GET /health
 ```
 
-Returns basic status and MQTT configuration info.
-
 ---
 
-### Aggregated telemetry state
+### Telemetry State
 
 ```
 GET /telemetry/state
 ```
 
 Returns:
-- last fast telemetry message
-- last slow telemetry message
-- last drive state
-- last drive acknowledgement
-- message counters
-- timestamp
 
-This endpoint is useful for:
-- debugging
-- initial UI state
-- monitoring backend activity
+- fast telemetry
+- slow telemetry
+- drive state
+- drive ACK
+- **tracking state (NEW)**
+- counters
+
+---
+
+### Tracking Control (NEW)
+
+```
+POST /tracking
+```
+
+### Payload
+
+```json
+{
+  "tracking_allowed": true
+}
+```
+
+### Behavior
+
+- Publishes to MQTT:
+  ```
+  robot/tracking/command
+  ```
+- Updates tracking state in backend
 
 ---
 
 ## Real-time (Socket.IO)
 
-### Events emitted by backend
+### Events emitted
 
 | Event | Description |
 |------|------------|
-| `telemetry:fast` | High-frequency telemetry |
-| `telemetry:slow` | Low-frequency telemetry |
-| `drive:state` | Current robot drive state |
-| `drive:ack` | Acknowledgement from robot |
-| `mqtt:message` | Raw MQTT message (debug) |
-
-On connection, the backend immediately sends the **last known values** for all channels.
+| `telemetry:fast` | Fast telemetry |
+| `telemetry:slow` | Slow telemetry |
+| `drive:state` | Robot movement |
+| `drive:ack` | ACK from robot |
+| `tracking:status` | Tracking state (NEW) |
 
 ---
 
-### Events received by backend
+### Events received
 
 | Event | Payload | Description |
 |------|--------|------------|
-| `cmd:drive` | `{ left, right }` | Drive command from frontend |
-
-- Values are clamped to `-255 .. 255`
-- Backend publishes the command to:
-  ```
-  robot/cmd/drive
-  ```
-- Backend emits confirmation back to sender:
-  ```
-  cmd:drive:sent
-  ```
+| `cmd:drive` | `{ left, right }` | Drive command |
 
 ---
 
-## MQTT Topic Handling
+## MQTT Filtering
 
-### Subscribed topics
+Allowed:
+- telemetry
+- drive state
+- ACK
+- tracking command
 
-- `robot/telemetry/*`
-- `robot/state/drive`
-- `robot/cmd/drive/ack`
-
-### Dropped topics
-
-- `robot/cmd/*` (except acknowledgements)
-
-This prevents feedback loops and accidental command echoing.
+Dropped:
+- other command topics (to avoid loops)
 
 ---
 
-## Notes for academic context
+## Configuration
 
-- Clear **separation of concerns**
-- Backend acts as a **protocol gateway**
-- Same backend works with:
-  - real ESP32 robot
-  - Python simulator
-- MQTT filtering avoids unsafe command loops
-- Suitable for:
-  - IoT
-  - Cyber-Physical Systems
-  - Web of Things
-  - Distributed Systems projects
+Create `.env`:
+
+```bash
+cp .env.example .env
+```
+
+### Variables
+
+| Variable | Example |
+|--------|--------|
+| `PORT` | 3001 |
+| `MQTT_URL` | mqtt://127.0.0.1:1883 |
+| `MQTT_TOPIC` | robot/# |
 
 ---
 
-## Next components
+## Run
 
-- Python robot simulator (MQTT publisher)
-- React + Vite frontend (Socket.IO consumer)
-- ESP32 firmware (real robot)
+```bash
+npm install
+npm run dev
+```
+
+---
+
+## Testing
+
+### View tracking status
+
+```bash
+mosquitto_sub -h localhost -t "robot/tracking/status" -v
+```
+
+---
+
+### Enable tracking
+
+```bash
+curl -X POST http://localhost:3001/tracking \
+  -H "Content-Type: application/json" \
+  -d '{"tracking_allowed":true}'
+```
+
+---
+
+### Disable tracking
+
+```bash
+curl -X POST http://localhost:3001/tracking \
+  -H "Content-Type: application/json" \
+  -d '{"tracking_allowed":false}'
+```
+
+---
+
+## Design Principles
+
+- Single source of truth (backend state)
+- Separation of concerns
+- Event-driven architecture
+- MQTT for device communication
+- HTTP/WebSocket for UI
+- Deterministic tracking logic
+
+---
+
+## Current Status
+
+- ✅ MQTT integration working
+- ✅ Telemetry aggregation
+- ✅ Drive control (frontend → robot)
+- ✅ ACK system
+- ✅ Tracking state machine implemented
+- ✅ 5-second stop detection
+- ✅ Tracking enable/disable via API
+- 🔧 Vision + tracking integration (next step)
+
+---
+
+## Next Steps
+
+- Integrate tracking with camera (Python)
+- Add bounding box streaming
+- Laser auto-targeting
+- Video stream to frontend
+- Advanced behaviors (avoidance, patrol)
+
+---
