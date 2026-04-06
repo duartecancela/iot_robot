@@ -23,7 +23,7 @@ function ensureTrackingState(state) {
     state.tracking = {
       robot_is_moving: false,
       stop_timestamp: null,
-      tracking_allowed: true,
+      tracking_allowed: false,
       tracking_active: false,
     };
   }
@@ -40,7 +40,12 @@ function buildTrackingStatus(state) {
 function publishTrackingStatus(mqttClient, state, io) {
   const payload = buildTrackingStatus(state);
 
-  mqttClient.publish("robot/tracking/status", JSON.stringify(payload));
+  mqttClient.publish(
+    "robot/tracking/status",
+    JSON.stringify(payload),
+    { retain: true }
+  );
+
   io.emit("tracking:status", {
     topic: "robot/tracking/status",
     json: payload,
@@ -48,25 +53,13 @@ function publishTrackingStatus(mqttClient, state, io) {
   });
 }
 
-function recomputeTrackingState(state, now = Date.now()) {
+function recomputeTrackingState(state) {
   ensureTrackingState(state);
 
   const prevActive = state.tracking.tracking_active;
 
-  if (state.tracking.robot_is_moving) {
-    state.tracking.tracking_active = false;
-    state.tracking.stop_timestamp = null;
-  } else {
-    if (state.tracking.stop_timestamp === null) {
-      state.tracking.stop_timestamp = now;
-    }
-
-    const stoppedLongEnough =
-      now - state.tracking.stop_timestamp >= 5000;
-
-    state.tracking.tracking_active =
-      state.tracking.tracking_allowed && stoppedLongEnough;
-  }
+  // Tracking is controlled only by the frontend button.
+  state.tracking.tracking_active = state.tracking.tracking_allowed;
 
   return prevActive !== state.tracking.tracking_active;
 }
@@ -101,8 +94,9 @@ export function setupMqtt({
     mqttClient.subscribe(
       [TOPIC_STATE_DRIVE, TOPIC_CMD_DRIVE_ACK, "robot/tracking/command"],
       (err) => {
-        if (err) console.log("MQTT subscribe (required) error:", err.message);
-        else {
+        if (err) {
+          console.log("MQTT subscribe (required) error:", err.message);
+        } else {
           console.log(
             "MQTT subscribed (required):",
             TOPIC_STATE_DRIVE,
@@ -110,6 +104,7 @@ export function setupMqtt({
             "robot/tracking/command"
           );
 
+          recomputeTrackingState(state);
           publishTrackingStatus(mqttClient, state, io);
         }
       }
@@ -160,13 +155,6 @@ export function setupMqtt({
           ? drive.moving
           : (drive.left !== 0 || drive.right !== 0);
 
-      if (state.tracking.robot_is_moving) {
-        state.tracking.stop_timestamp = null;
-      } else if (state.tracking.stop_timestamp === null) {
-        state.tracking.stop_timestamp = Date.now();
-      }
-
-      recomputeTrackingState(state);
       publishTrackingStatus(mqttClient, state, io);
     } else if (topic === "robot/tracking/command") {
       const cmd = msg.json || {};
@@ -182,15 +170,4 @@ export function setupMqtt({
       io.emit("drive:ack", msg);
     }
   });
-
-  // Periodic tracking reevaluation so the 5-second stop timer can complete
-  setInterval(() => {
-    if (!mqttClient.connected) return;
-
-    const changed = recomputeTrackingState(state);
-
-    if (changed) {
-      publishTrackingStatus(mqttClient, state, io);
-    }
-  }, 200);
 }

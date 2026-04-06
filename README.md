@@ -11,16 +11,21 @@ for visualization and command execution.
 
 ## Project Structure
 
-```
+```text
 iot_robot/
-├─ esp32/         # ESP32 firmware (PlatformIO)
-├─ rpi/           # Raspberry Pi runtime (camera, servos, vision)
-├─ simulator/     # Python robot simulator (MQTT)
+├─ .vscode/       # VSCode settings
 ├─ backend/       # Node.js backend (MQTT ↔ Socket.IO bridge)
+├─ docs/          # Documentation (diagrams, notes, reports)
+├─ esp32/         # ESP32 firmware (PlatformIO)
 ├─ frontend/      # React frontend (Vite)
+├─ rpi/           # Raspberry Pi runtime (camera, servos, vision)
 ├─ shared/        # Shared configuration
 │  └─ config/
 │     └─ defaults.json
+├─ simulator/     # Python robot simulator (MQTT)
+├─ start_dev.sh   # Dev script (start backend + frontend)
+├─ stop_dev.sh    # Dev script (stop services)
+├─ .gitignore
 └─ README.md
 ```
 
@@ -30,7 +35,7 @@ iot_robot/
 
 The system follows a layered, decoupled architecture:
 
-```
+```text
 ESP32 (motors/sensors)     Raspberry Pi (vision/servos)
             |                       |
             +---------- MQTT -------+
@@ -54,7 +59,7 @@ without requiring physical hardware.
 When running the system on a Raspberry Pi, services are accessed using the
 hostname:
 
-```
+```text
 iotrobot.local
 ```
 
@@ -64,18 +69,28 @@ different networks (home Wi-Fi, hotspot, lab networks, etc.).
 Example access points:
 
 Frontend:
-```
+```text
 http://iotrobot.local:5173
 ```
 
 Backend API:
-```
+```text
 http://iotrobot.local:3001
 ```
 
 MQTT Broker:
-```
+```text
 mqtt://iotrobot.local:1883
+```
+
+Raspberry Pi video stream:
+```text
+http://iotrobot.local:8080/stream.mjpg
+```
+
+Raspberry Pi detections endpoint:
+```text
+http://iotrobot.local:8080/detections
 ```
 
 All components (ESP32 firmware, simulator, backend and frontend)
@@ -102,7 +117,8 @@ Edge computation layer:
 - Object detection
 - Servo pan/tilt control
 - Laser / actuator control
-- Optional MQTT integration
+- MQTT-controlled tracking state
+- MJPEG stream + JSON detections endpoint
 
 This layer performs high-level processing that is not suitable
 for microcontroller execution.
@@ -128,6 +144,7 @@ Node.js (Express) application:
 - Bridges MQTT ↔ Web (Socket.IO)
 - Aggregates telemetry state
 - Exposes HTTP + real-time endpoints
+- Publishes tracking state for Raspberry Pi
 
 See: `backend/README.md`
 
@@ -137,7 +154,8 @@ See: `backend/README.md`
 React (Vite) web interface:
 - Real-time telemetry visualization
 - Robot control interface
-- Communicates with backend via Socket.IO
+- Tracking enable/disable button
+- Communicates with backend via Socket.IO + HTTP
 
 See: `frontend/README.md`
 
@@ -147,13 +165,13 @@ See: `frontend/README.md`
 
 Default configuration is defined in:
 
-```
+```text
 shared/config/defaults.json
 ```
 
 Configuration resolution order:
 
-```
+```text
 Environment variables → shared defaults → internal fallback
 ```
 
@@ -186,12 +204,12 @@ Stop development environment:
 Default development endpoints:
 
 Frontend:
-```
+```text
 http://iotrobot.local:5173
 ```
 
 Backend:
-```
+```text
 http://iotrobot.local:3001
 ```
 
@@ -202,38 +220,183 @@ on the Raspberry Pi.
 
 ---
 
-## Core Technologies
+## Manual Startup
 
-<<<<<<< HEAD
-- ESP32 / PlatformIO
-- Raspberry Pi (Python / OpenCV)
-- MQTT (Mosquitto)
-- Node.js (Express)
-- Socket.IO
-- React (Vite)
-- Python
+This section documents the current manual commands required to start
+each layer during development.
+
+### 1) Start MQTT broker
+
+On the Raspberry Pi or machine running Mosquitto:
+
+```bash
+sudo systemctl start mosquitto
+sudo systemctl status mosquitto
+```
+
+Optional test:
+
+```bash
+mosquitto_sub -h localhost -t "robot/#" -v
+```
 
 ---
 
-## Deployment Targets
+### 2) Start backend
 
-- **Development:** PC + Simulator
-- **Edge Runtime:** Raspberry Pi
-- **Production Robot:** ESP32 + Raspberry Pi
+From the project root:
 
-No structural changes are required when switching environments.
-=======
+```bash
+cd backend
+npm install
+npm run dev
+```
+
+Expected endpoint:
+
+```text
+http://iotrobot.local:3001
+```
+
+---
+
+### 3) Start frontend
+
+From the project root:
+
+```bash
+cd frontend
+npm install
+npm run dev -- --host
+```
+
+Expected endpoint:
+
+```text
+http://iotrobot.local:5173
+```
+
+---
+
+### 4) Start Raspberry Pi camera streaming
+
+From the project root:
+
+```bash
+cd rpi
+source venv/bin/activate
+python -m camera.camera_stream
+```
+
+Or with explicit target selection:
+
+```bash
+cd rpi
+source venv/bin/activate
+TARGET=cell_phone python -m camera.camera_stream
+```
+
+Alternative examples:
+
+```bash
+TARGET=bird python -m camera.camera_stream
+TARGET=all python -m camera.camera_stream
+```
+
+Available endpoints:
+
+Stream:
+```text
+http://iotrobot.local:8080/stream.mjpg
+```
+
+Detections:
+```text
+http://iotrobot.local:8080/detections
+```
+
+Health:
+```text
+http://iotrobot.local:8080/health
+```
+
+---
+
+### 5) Start Raspberry Pi tracking controller
+
+In another terminal:
+
+```bash
+cd rpi
+source venv/bin/activate
+python -m tracking.tracking_controller
+```
+
+This process:
+
+- subscribes to `robot/tracking/status`
+- waits for tracking state updates from backend
+- only runs servo tracking when `tracking_active == true`
+- recenters servos when tracking state changes
+- keeps the camera stream running independently
+
+---
+
+### 6) Optional: start simulator instead of ESP32
+
+From the project root:
+
+```bash
+cd simulator
+python3 simulator.py
+```
+
+Use this when testing backend/frontend without the physical robot.
+
+---
+
+## Tracking Control Flow
+
+Tracking is now controlled manually from the frontend button.
+
+Flow:
+
+```text
+Frontend button
+   ↓
+POST /tracking
+   ↓
+MQTT -> robot/tracking/command
+   ↓
+Backend recomputes tracking state
+   ↓
+MQTT -> robot/tracking/status
+   ↓
+Raspberry Pi tracking controller enables/disables tracking
+```
+
+Current behavior:
+
+- Video streaming remains always available
+- Tracking only runs when enabled from frontend
+- When tracking is disabled, servos return to the initial position
+- Tracking state is published with MQTT retain enabled
+
+---
+
+## Raspberry Pi Wiring Notes
+
 ## PCA9685
 
 - VCC → 3.3V (RPi)
-- GND → GND (Pin 6) Shared
+- GND → GND (Pin 6, shared)
 - SDA → GPIO2 (Pin 3)
 - SCL → GPIO3 (Pin 5)
 
 ## Servos
 
 - External 5V supply required
-- DO NOT power from Raspberry Pi
+- Do not power servos directly from Raspberry Pi
 - Common GND mandatory
 
 ## Laser (MOSFET)
@@ -244,11 +407,36 @@ No structural changes are required when switching environments.
 
 ---
 
+## Core Technologies
+
+- ESP32 / PlatformIO
+- Raspberry Pi (Python / OpenCV)
+- MQTT (Mosquitto)
+- Node.js (Express)
+- Socket.IO
+- React (Vite)
+- Python
+- Picamera2
+- PCA9685
+
+---
+
+## Deployment Targets
+
+- **Development:** PC + Simulator
+- **Edge Runtime:** Raspberry Pi
+- **Production Robot:** ESP32 + Raspberry Pi
+
+No structural changes are required when switching environments.
+
+---
+
 ## Notes
 
 - Sensitive files (`.env`, `secrets.ini`) are not committed
 - Example configuration files are provided
 - Designed for modular expansion and future hardware integration
+- A future startup script can automate backend + frontend + Raspberry Pi services
 
 ---
 

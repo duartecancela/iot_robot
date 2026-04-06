@@ -226,6 +226,103 @@ Tracking features:
 
 ---
 
+# 7) MQTT Integration (Tracking Control)
+
+The tracking system is controlled via MQTT, allowing the frontend/backend
+to enable or disable tracking in real time.
+
+## Topics
+
+### robot/tracking/status (backend → Raspberry Pi)
+
+Payload example:
+
+```json
+{
+  "tracking_allowed": true,
+  "tracking_active": true,
+  "robot_is_moving": false
+}
+```
+
+Description:
+
+- `tracking_allowed` → controlled by frontend button
+- `tracking_active` → final state (used by Raspberry Pi)
+- `robot_is_moving` → informational (not used to enable/disable tracking)
+
+This topic is published with:
+
+- `retain = true`
+
+This ensures that the Raspberry Pi receives the last known state
+immediately after connecting.
+
+---
+
+### robot/tracking/command (frontend → backend)
+
+Payload example:
+
+```json
+{
+  "tracking_allowed": true
+}
+```
+
+Used to:
+
+- Enable or disable tracking from the frontend
+- Backend recomputes state and publishes `tracking/status`
+
+---
+
+## Behavior
+
+Tracking is now **fully controlled by the frontend**.
+
+Rules:
+
+- If `tracking_active == true`:
+  - Tracking loop runs
+  - Servos follow target
+  - Laser may fire (if centered)
+
+- If `tracking_active == false`:
+  - Tracking loop is paused
+  - Servos stop moving
+  - Laser disabled
+
+---
+
+## State Flow
+
+Frontend button  
+↓  
+POST /tracking  
+↓  
+MQTT → robot/tracking/command  
+↓  
+Backend updates state  
+↓  
+MQTT → robot/tracking/status (retain)  
+↓  
+Raspberry Pi receives update  
+↓  
+Tracking enabled/disabled
+
+---
+
+## Important Notes
+
+- Tracking no longer depends on:
+  - robot movement
+  - stop timers
+- No automatic activation logic is used
+- System is now fully deterministic and user-controlled
+
+---
+
 # Next Steps
 
 - Integrate laser trigger with tracking (center-based firing)
