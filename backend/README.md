@@ -6,7 +6,7 @@ It receives robot telemetry via MQTT, keeps an aggregated state, and exposes the
 
 The backend is also responsible for:
 - sending control commands to the robot
-- managing **tracking logic based on robot movement**
+- managing **tracking control via frontend commands**
 
 ---
 
@@ -19,7 +19,7 @@ The backend is also responsible for:
   - HTTP REST endpoints
   - Socket.IO (real-time)
 - Sends drive commands from frontend to robot
-- Implements **tracking control logic**
+- Implements **manual tracking control**
 - Publishes tracking state via MQTT
 - Configuration via environment variables
 
@@ -69,7 +69,7 @@ backend/
 └─ src/
    ├─ http.js      # REST API
    ├─ ws.js        # Socket.IO
-   └─ mqtt.js      # MQTT logic + tracking state machine
+   └─ mqtt.js      # MQTT logic + tracking control
 ```
 
 ---
@@ -81,12 +81,12 @@ backend/
 - Topic filtering
 - Routing messages to frontend
 - Maintaining internal state
-- **Tracking state machine (movement + timer)**
+- **Tracking control logic**
 
 ### `http.js`
 - `/health`
 - `/telemetry/state`
-- `/tracking` (NEW)
+- `/tracking`
 
 ### `ws.js`
 - Real-time telemetry updates
@@ -96,29 +96,28 @@ backend/
 
 ## Tracking Logic (IMPORTANT)
 
-The backend implements a **state machine** that controls whether tracking is allowed.
+The backend implements a **tracking control mechanism** that determines whether object tracking should be active.
 
 ### Inputs
-- `robot/state/drive` (from ESP32)
 - `robot/tracking/command` (from frontend)
 
 ### Internal state
 
 ```js
 tracking = {
-  robot_is_moving,
-  stop_timestamp,
   tracking_allowed,
   tracking_active
 }
 ```
 
-### Rules
+### Behavior
 
-- If robot is moving → tracking OFF
-- If robot stops → start timer
-- If stopped for ≥ 5 seconds → tracking ON
-- If tracking is manually disabled → tracking OFF
+- Tracking is controlled **explicitly by the user** via the frontend
+- When the user enables tracking:
+  - backend updates internal state
+  - publishes new tracking status via MQTT
+- When the user disables tracking:
+  - tracking is immediately stopped
 
 ### Result
 
@@ -127,6 +126,17 @@ The backend publishes:
 ```
 robot/tracking/status
 ```
+
+### Example
+
+```json
+{
+  "tracking_allowed": true,
+  "tracking_active": true
+}
+```
+
+This approach provides **full manual control**, improving predictability and simplifying system behavior during testing and operation.
 
 ---
 
@@ -137,7 +147,7 @@ robot/tracking/status
 - `robot/telemetry/*`
 - `robot/state/drive`
 - `robot/cmd/drive/ack`
-- `robot/tracking/command` ✅ NEW
+- `robot/tracking/command`
 
 ---
 
@@ -148,7 +158,7 @@ robot/tracking/status
 robot/cmd/drive
 ```
 
-#### Tracking status (NEW)
+#### Tracking status
 ```
 robot/tracking/status
 ```
@@ -158,8 +168,7 @@ robot/tracking/status
 ```json
 {
   "tracking_allowed": true,
-  "tracking_active": true,
-  "robot_is_moving": false
+  "tracking_active": true
 }
 ```
 
@@ -187,12 +196,12 @@ Returns:
 - slow telemetry
 - drive state
 - drive ACK
-- **tracking state (NEW)**
+- tracking state
 - counters
 
 ---
 
-### Tracking Control (NEW)
+### Tracking Control
 
 ```
 POST /tracking
@@ -208,11 +217,12 @@ POST /tracking
 
 ### Behavior
 
+- Controlled manually from frontend
 - Publishes to MQTT:
   ```
   robot/tracking/command
   ```
-- Updates tracking state in backend
+- Updates backend tracking state
 
 ---
 
@@ -226,7 +236,7 @@ POST /tracking
 | `telemetry:slow` | Slow telemetry |
 | `drive:state` | Robot movement |
 | `drive:ack` | ACK from robot |
-| `tracking:status` | Tracking state (NEW) |
+| `tracking:status` | Tracking state |
 
 ---
 
@@ -315,7 +325,7 @@ curl -X POST http://localhost:3001/tracking \
 - Event-driven architecture
 - MQTT for device communication
 - HTTP/WebSocket for UI
-- Deterministic tracking logic
+- Explicit user control over tracking behavior
 
 ---
 
@@ -325,8 +335,7 @@ curl -X POST http://localhost:3001/tracking \
 - ✅ Telemetry aggregation
 - ✅ Drive control (frontend → robot)
 - ✅ ACK system
-- ✅ Tracking state machine implemented
-- ✅ 5-second stop detection
+- ✅ Manual tracking control via frontend
 - ✅ Tracking enable/disable via API
 - 🔧 Vision + tracking integration (next step)
 
@@ -339,5 +348,3 @@ curl -X POST http://localhost:3001/tracking \
 - Laser auto-targeting
 - Video stream to frontend
 - Advanced behaviors (avoidance, patrol)
-
----
