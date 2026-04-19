@@ -33,7 +33,7 @@ state_lock = threading.Lock()
 # --------------------
 # Tuning
 # --------------------
-CONF_MIN = 0.55
+CONF_MIN = 0.30
 
 DBX_LOW = 0.10
 DBX_HIGH = 0.16
