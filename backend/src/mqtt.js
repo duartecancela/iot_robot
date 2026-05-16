@@ -1,5 +1,7 @@
 // src/mqtt.js
 
+import { getMongoDb } from "./db.js";
+
 export function isAllowedIncomingTopicFactory({
   TOPIC_STATE_DRIVE,
   TOPIC_CMD_DRIVE_ACK,
@@ -62,6 +64,23 @@ function recomputeTrackingState(state) {
   state.tracking.tracking_active = state.tracking.tracking_allowed;
 
   return prevActive !== state.tracking.tracking_active;
+}
+
+function logMqttMessage(state, msg) {
+  if (!state.logging?.enabled) return;
+
+  getMongoDb()
+    .collection("mqtt_logs")
+    .insertOne({
+      topic: msg.topic,
+      raw: msg.raw,
+      json: msg.json,
+      ts: msg.ts,
+      loggedAt: new Date(),
+    })
+    .catch((err) => {
+      console.log("MongoDB log insert error:", err.message);
+    });
 }
 
 export function setupMqtt({
@@ -138,6 +157,8 @@ export function setupMqtt({
     }
 
     state.lastMessage = msg;
+
+    logMqttMessage(state, msg);
 
     if (topic === "robot/telemetry/fast") {
       state.lastFast = msg;

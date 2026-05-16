@@ -21,6 +21,7 @@ The backend is also responsible for:
 - Sends drive commands from frontend to robot
 - Implements **manual tracking control**
 - Publishes tracking state via MQTT
+- MQTT logging to MongoDB
 - Configuration via environment variables
 
 ---
@@ -31,7 +32,42 @@ The backend is also responsible for:
 - Express
 - MQTT (`mqtt`)
 - Socket.IO
+- MongoDB (`mongodb`)
 - dotenv
+
+---
+
+## MongoDB
+
+The backend supports MongoDB integration for:
+
+- MQTT logging
+- telemetry history
+- future analytics
+
+Default local connection:
+
+```text
+mongodb://127.0.0.1:27017
+```
+
+Default database:
+
+```text
+iot_robot
+```
+
+### Collections
+
+| Collection | Purpose |
+|------------|----------|
+| `mqtt_logs` | MQTT telemetry and event logging |
+
+MongoDB setup instructions are available in:
+
+```text
+docs/mongodb_setup.md
+```
 
 ---
 
@@ -63,10 +99,11 @@ The backend is the **central coordination layer**:
 
 ## Backend Structure
 
-```
+```text
 backend/
 ├─ index.js        # Application bootstrap
 └─ src/
+   ├─ db.js        # MongoDB connection
    ├─ http.js      # REST API
    ├─ ws.js        # Socket.IO
    └─ mqtt.js      # MQTT logic + tracking control
@@ -76,17 +113,25 @@ backend/
 
 ## Core Responsibilities
 
+### `db.js`
+- MongoDB connection management
+- Database access layer
+
 ### `mqtt.js`
 - MQTT connection and subscriptions
 - Topic filtering
 - Routing messages to frontend
 - Maintaining internal state
+- MQTT logging to MongoDB
 - **Tracking control logic**
 
 ### `http.js`
 - `/health`
 - `/telemetry/state`
 - `/tracking`
+- `/logging`
+- `/logging/status`
+- `/test-log`
 
 ### `ws.js`
 - Real-time telemetry updates
@@ -226,6 +271,59 @@ POST /tracking
 
 ---
 
+### Logging Status
+
+```
+GET /logging/status
+```
+
+Returns current logging state.
+
+### Example
+
+```json
+{
+  "ok": true,
+  "logging": {
+    "enabled": true,
+    "startedAt": 1778944524741
+  }
+}
+```
+
+---
+
+### Logging Control
+
+```
+POST /logging
+```
+
+### Payload
+
+```json
+{
+  "enabled": true
+}
+```
+
+### Behavior
+
+- Enables or disables MQTT logging to MongoDB
+- Updates backend logging state
+
+---
+
+### Test MongoDB Insert
+
+```
+POST /test-log
+```
+
+Used to validate MongoDB connectivity and document insertion.
+
+---
+
 ## Real-time (Socket.IO)
 
 ### Events emitted
@@ -279,10 +377,17 @@ cp .env.example .env
 
 ---
 
-## Run
+## Install Dependencies
 
 ```bash
 npm install
+```
+
+---
+
+## Run
+
+```bash
 npm run dev
 ```
 
@@ -318,6 +423,44 @@ curl -X POST http://localhost:3001/tracking \
 
 ---
 
+### Enable logging
+
+```bash
+curl -X POST http://localhost:3001/logging \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true}'
+```
+
+---
+
+### Disable logging
+
+```bash
+curl -X POST http://localhost:3001/logging \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":false}'
+```
+
+---
+
+### Check logging status
+
+```bash
+curl http://localhost:3001/logging/status
+```
+
+---
+
+### Publish MQTT test message
+
+```bash
+mosquitto_pub -h localhost \
+  -t robot/telemetry/fast \
+  -m '{"test":true,"value":123}'
+```
+
+---
+
 ## Design Principles
 
 - Single source of truth (backend state)
@@ -337,12 +480,17 @@ curl -X POST http://localhost:3001/tracking \
 - ✅ ACK system
 - ✅ Manual tracking control via frontend
 - ✅ Tracking enable/disable via API
+- ✅ MongoDB integration
+- ✅ MQTT logging to MongoDB
+- ✅ Logging enable/disable API
 - 🔧 Vision + tracking integration (next step)
 
 ---
 
 ## Next Steps
 
+- Integrate logging controls into frontend
+- Add log visualization dashboard
 - Integrate tracking with camera (Python)
 - Add bounding box streaming
 - Laser auto-targeting

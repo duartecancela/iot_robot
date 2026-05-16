@@ -4,6 +4,7 @@
 
 import express from "express";
 import cors from "cors";
+import { getMongoDb } from "./db.js";
 
 export function createHttpApp({
   MQTT_URL,
@@ -94,6 +95,57 @@ export function createHttpApp({
       });
     });
   });
+
+  // POST /test-log
+  app.post("/test-log", async (req, res) => {
+    try {
+      const db = getMongoDb();
+
+      const result = await db.collection("mqtt_logs").insertOne({
+        topic: "robot/test",
+        value: Math.floor(Math.random() * 1000),
+        ts: Date.now(),
+      });
+
+      res.json({
+        ok: true,
+        insertedId: result.insertedId,
+      });
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        error: err.message,
+      });
+    }
+  });
+
+  // GET /logging/status
+app.get("/logging/status", (req, res) => {
+  res.json({
+    ok: true,
+    logging: state.logging,
+  });
+});
+
+// POST /logging
+app.post("/logging", (req, res) => {
+  const { enabled } = req.body || {};
+
+  if (typeof enabled !== "boolean") {
+    return res.status(400).json({
+      ok: false,
+      error: "enabled must be a boolean",
+    });
+  }
+
+  state.logging.enabled = enabled;
+  state.logging.startedAt = enabled ? Date.now() : null;
+
+  res.json({
+    ok: true,
+    logging: state.logging,
+  });
+});
 
   return app;
 }

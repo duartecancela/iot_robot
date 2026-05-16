@@ -8,6 +8,7 @@ import mqtt from "mqtt";
 import { createHttpApp } from "./src/http.js";
 import { setupWebSocket } from "./src/ws.js";
 import { setupMqtt } from "./src/mqtt.js";
+import { connectMongo } from "./src/db.js";
 
 // --------------------
 // Config (same defaults)
@@ -37,6 +38,10 @@ const state = {
   lastDriveState: null,
   lastDriveAck: null,
   lastMessage: null,
+  logging: {
+    enabled: false,
+    startedAt: null,
+  },
   counters: {
     total: 0,
     allowed: 0,
@@ -44,6 +49,11 @@ const state = {
     byTopic: {},
   },
 };
+
+// --------------------
+// MongoDB
+// --------------------
+await connectMongo();
 
 // --------------------
 // MQTT client
