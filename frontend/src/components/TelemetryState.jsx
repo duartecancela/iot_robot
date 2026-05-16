@@ -10,7 +10,8 @@ import {
   XCircleIcon,
 } from '@heroicons/react/24/outline'
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL
+const BACKEND_URL =
+  import.meta.env.VITE_BACKEND_URL || 'http://iotrobot.local:3001'
 
 function Cell({ label, value, Icon, variant = 'base' }) {
   const variants = {

@@ -66,8 +66,20 @@ function recomputeTrackingState(state) {
   return prevActive !== state.tracking.tracking_active;
 }
 
+let lastMongoLogTime = 0;
+
 function logMqttMessage(state, msg) {
   if (!state.logging?.enabled) return;
+
+  const now = Date.now();
+
+  // Store only one MQTT message every 2 seconds in MongoDB.
+  // Realtime frontend updates are not affected.
+  if (now - lastMongoLogTime < 2000) {
+    return;
+  }
+
+  lastMongoLogTime = now;
 
   getMongoDb()
     .collection("mqtt_logs")

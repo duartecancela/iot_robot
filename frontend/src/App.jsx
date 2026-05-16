@@ -3,6 +3,7 @@ import Footer from './components/Footer'
 import TelemetryState from './components/TelemetryState'
 import DriveJoystick from './components/DriveJoystick'
 import VideoStream from './components/VideoStream'
+import LoggingControl from "./components/LoggingControl";
 
 
 
@@ -14,6 +15,7 @@ function App() {
       <main className="flex-1 max-w-5xl mx-auto p-6">
         <VideoStream />
         <TelemetryState />
+        <LoggingControl />
         <DriveJoystick />
       </main>
       
