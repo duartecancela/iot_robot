@@ -14,6 +14,27 @@ mkdir -p "$PROJECT_ROOT/logs"
 mkdir -p "$PROJECT_ROOT/.pids"
 
 # --------------------------------------------------
+# MongoDB (Docker)
+# --------------------------------------------------
+
+echo "Checking MongoDB container..."
+
+if sudo docker container inspect robot-mongo >/dev/null 2>&1; then
+    if [ "$(sudo docker inspect -f '{{.State.Running}}' robot-mongo)" != "true" ]; then
+        echo "Starting MongoDB container..."
+        sudo docker start robot-mongo >/dev/null
+        sleep 3
+    else
+        echo "MongoDB container already running."
+    fi
+else
+    echo "WARNING: MongoDB container 'robot-mongo' not found."
+    echo "Backend may fail to start."
+fi
+
+echo ""
+
+# --------------------------------------------------
 # Auto-update frontend .env
 # --------------------------------------------------
 

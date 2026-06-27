@@ -44,5 +44,23 @@ echo "Cleaning possible remaining frontend/backend ports..."
 fuser -k 5173/tcp 2>/dev/null
 fuser -k 3001/tcp 2>/dev/null
 
+# --------------------------------------------------
+# MongoDB (Docker)
+# --------------------------------------------------
+
+echo ""
+echo "Stopping MongoDB container..."
+
+if sudo docker container inspect robot-mongo >/dev/null 2>&1; then
+    if [ "$(sudo docker inspect -f '{{.State.Running}}' robot-mongo)" = "true" ]; then
+        sudo docker stop robot-mongo >/dev/null
+        echo "MongoDB container stopped."
+    else
+        echo "MongoDB container already stopped."
+    fi
+else
+    echo "MongoDB container not found."
+fi
+
 echo ""
 echo "Stopped."
